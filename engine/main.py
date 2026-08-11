@@ -44,6 +44,7 @@ from keyboard.air_tap.tap_detector import VirtualKeyboard
 from gestures.recognition.studio import GestureStudio
 from gestures.registry.manager import GestureRegistry
 from gestures.profiles.profile_manager import ProfileManager
+from gestures.arbitration.arbitrator import GestureArbitrator
 from input.windows.foreground import ForegroundAppDetector
 from input.action_registry import ActionRegistry
 
@@ -159,8 +160,9 @@ class AirOSEngine:
         self._palm = OpenPalmDetector()
         self._two_hand = TwoHandDetector()
 
-        # State machine
+        # State machine & Arbitrator
         self._state_machine = StateMachine()
+        self._arbitrator = GestureArbitrator()
 
         # Calibration
         self._calibration = CalibrationManager()
@@ -374,8 +376,19 @@ class AirOSEngine:
             custom_id = None
             if self._enabled and not is_pinched:
                 custom_id = self._studio.match(landmarks, ts)
-                if custom_id:
-                    self._execute_custom_gesture(custom_id)
+
+            # Central Arbitration
+            gesture_event, custom_id = self._arbitrator.arbitrate(
+                system_event=gesture_event,
+                custom_gesture_id=custom_id,
+                is_pinched=is_pinched,
+                is_paused=not self._enabled,
+                is_calibrating=self._calibration_active,
+                is_keyboard=self._state_machine.state == InteractionState.KEYBOARD,
+            )
+
+            if custom_id:
+                self._execute_custom_gesture(custom_id)
 
             # Determine current gesture type for state machine
             if gesture_event:
