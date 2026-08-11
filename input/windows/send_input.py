@@ -135,24 +135,35 @@ class WindowsInputAdapter:
     def __init__(self):
         self._user32 = ctypes.WinDLL("user32", use_last_error=True)
         self._enabled = True
-        self._screen_width: Optional[int] = None
-        self._screen_height: Optional[int] = None
+        self._virtual_left: int = 0
+        self._virtual_top: int = 0
+        self._virtual_width: int = 0
+        self._virtual_height: int = 0
         self._last_inject_time: float = 0.0
         self._inject_count: int = 0
         self._inject_failures: int = 0
         self._refresh_screen_size()
 
     def _refresh_screen_size(self):
-        """Get virtual screen dimensions (handles multi-monitor)."""
+        """Get virtual screen dimensions and origins (handles multi-monitor)."""
+        SM_XVIRTUALSCREEN = 76
+        SM_YVIRTUALSCREEN = 77
         SM_CXVIRTUALSCREEN = 78
         SM_CYVIRTUALSCREEN = 79
-        self._screen_width = self._user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
-        self._screen_height = self._user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
-        if self._screen_width == 0 or self._screen_height == 0:
+        self._virtual_left = self._user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        self._virtual_top = self._user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        self._virtual_width = self._user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        self._virtual_height = self._user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        if self._virtual_width == 0 or self._virtual_height == 0:
             # Fallback to primary screen
-            self._screen_width = self._user32.GetSystemMetrics(0)   # SM_CXSCREEN
-            self._screen_height = self._user32.GetSystemMetrics(1)  # SM_CYSCREEN
-        logger.info(f"Screen size: {self._screen_width}x{self._screen_height}")
+            self._virtual_left = 0
+            self._virtual_top = 0
+            self._virtual_width = self._user32.GetSystemMetrics(0)   # SM_CXSCREEN
+            self._virtual_height = self._user32.GetSystemMetrics(1)  # SM_CYSCREEN
+        logger.info(
+            f"Screen size: origin=({self._virtual_left},{self._virtual_top}), "
+            f"dim={self._virtual_width}x{self._virtual_height}"
+        )
 
     def enable(self):
         """Enable input injection."""
@@ -223,11 +234,11 @@ class WindowsInputAdapter:
     def _screen_to_absolute(self, x: int, y: int) -> tuple[int, int]:
         """
         Convert screen pixel coordinates to absolute SendInput coordinates [0, 65535].
-        Handles virtual (multi-monitor) screen space.
+        Handles virtual (multi-monitor) screen space with negative origins.
         """
-        if self._screen_width and self._screen_height:
-            abs_x = int((x * 65535) / (self._screen_width - 1))
-            abs_y = int((y * 65535) / (self._screen_height - 1))
+        if self._virtual_width > 1 and self._virtual_height > 1:
+            abs_x = int(((x - self._virtual_left) * 65535) / (self._virtual_width - 1))
+            abs_y = int(((y - self._virtual_top) * 65535) / (self._virtual_height - 1))
         else:
             abs_x = x
             abs_y = y

@@ -42,9 +42,11 @@ class CursorConfig:
     # Dead zone: ignore movement smaller than this (normalized units after region)
     dead_zone: float = 0.008
 
-    # Screen dimensions (will be auto-detected if 0)
-    screen_width: int = 0
-    screen_height: int = 0
+    # Screen dimensions & origins (auto-detected if 0)
+    virtual_left: int = 0
+    virtual_top: int = 0
+    screen_width: int = 0      # virtual_width
+    screen_height: int = 0     # virtual_height
 
     # One Euro Filter parameters
     one_euro_freq: float = 30.0
@@ -52,7 +54,7 @@ class CursorConfig:
     one_euro_beta: float = 0.008         # Responsiveness when fast
     one_euro_d_cutoff: float = 1.0
 
-    # Sensitivity multiplier (1.0 = 1:1 mapping, >1.0 = faster)
+    # Sensitivity multiplier gain (1.0 = 1:1 gain around interaction center, >1.0 = higher velocity gain)
     sensitivity: float = 1.0
 
 
@@ -94,24 +96,31 @@ class CursorEngine:
         self._last_screen_y: int = 0
 
     def initialize(self) -> bool:
-        """Auto-detect screen dimensions if not configured."""
+        """Auto-detect virtual screen dimensions and origins for multi-monitor support."""
         if self.config.screen_width == 0 or self.config.screen_height == 0:
             try:
                 import ctypes
                 user32 = ctypes.windll.user32
                 # Use virtual screen for multi-monitor support
+                self.config.virtual_left = user32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+                self.config.virtual_top = user32.GetSystemMetrics(77)    # SM_YVIRTUALSCREEN
                 self.config.screen_width = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
                 self.config.screen_height = user32.GetSystemMetrics(79) # SM_CYVIRTUALSCREEN
                 if self.config.screen_width == 0:
+                    self.config.virtual_left = 0
+                    self.config.virtual_top = 0
                     self.config.screen_width = user32.GetSystemMetrics(0)   # SM_CXSCREEN
                     self.config.screen_height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
             except Exception as e:
                 logger.warning(f"Could not detect screen size: {e}. Using 1920x1080")
+                self.config.virtual_left = 0
+                self.config.virtual_top = 0
                 self.config.screen_width = 1920
                 self.config.screen_height = 1080
 
         logger.info(
-            f"CursorEngine initialized: screen={self.config.screen_width}x{self.config.screen_height}, "
+            f"CursorEngine initialized: origin=({self.config.virtual_left},{self.config.virtual_top}), "
+            f"screen={self.config.screen_width}x{self.config.screen_height}, "
             f"region=({self.config.region_left:.2f},{self.config.region_top:.2f})"
             f"-({self.config.region_right:.2f},{self.config.region_bottom:.2f})"
         )
@@ -131,12 +140,12 @@ class CursorEngine:
             timestamp: Optional monotonic timestamp for filter
         
         Returns:
-            (screen_x, screen_y) in pixels, clamped to screen bounds
+            (screen_x, screen_y) in pixels, clamped to virtual screen bounds
         """
         if timestamp is None:
             timestamp = time.monotonic()
 
-        # 1. Clamp to interaction region
+        # 1. Clamp to interaction region [0, 1]
         region_x = self._normalize_to_region(
             norm_x, self.config.region_left, self.config.region_right
         )
@@ -159,13 +168,25 @@ class CursorEngine:
         self._state.filtered_x = filtered_x
         self._state.filtered_y = filtered_y
 
-        # 4. Apply sensitivity and map to screen pixels
-        screen_x = int(filtered_x * self.config.screen_width * self.config.sensitivity)
-        screen_y = int(filtered_y * self.config.screen_height * self.config.sensitivity)
+        # 4. Apply relative sensitivity gain around center reference point (0.5, 0.5)
+        center_x, center_y = 0.5, 0.5
+        scaled_x = center_x + (filtered_x - center_x) * self.config.sensitivity
+        scaled_y = center_y + (filtered_y - center_y) * self.config.sensitivity
+        scaled_x = max(0.0, min(1.0, scaled_x))
+        scaled_y = max(0.0, min(1.0, scaled_y))
 
-        # 5. Clamp to screen bounds
-        screen_x = max(0, min(self.config.screen_width - 1, screen_x))
-        screen_y = max(0, min(self.config.screen_height - 1, screen_y))
+        # 5. Map to virtual screen pixel bounds (handles negative origins)
+        screen_x = self.config.virtual_left + int(scaled_x * (self.config.screen_width - 1))
+        screen_y = self.config.virtual_top + int(scaled_y * (self.config.screen_height - 1))
+
+        # 6. Clamp to virtual desktop bounds
+        min_x = self.config.virtual_left
+        max_x = self.config.virtual_left + self.config.screen_width - 1
+        min_y = self.config.virtual_top
+        max_y = self.config.virtual_top + self.config.screen_height - 1
+
+        screen_x = max(min_x, min(max_x, screen_x))
+        screen_y = max(min_y, min(max_y, screen_y))
 
         self._state.screen_x = screen_x
         self._state.screen_y = screen_y
