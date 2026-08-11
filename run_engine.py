@@ -22,9 +22,13 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
 
+from config.paths import get_logs_dir
+
 def setup_logging(debug: bool = False):
     level = logging.DEBUG if debug else logging.INFO
     import sys, io
+    logs_dir = get_logs_dir()
+    os.makedirs(logs_dir, exist_ok=True)
     # Force UTF-8 on Windows console to handle emoji/arrows in logs
     if hasattr(sys.stdout, 'reconfigure'):
         try:
@@ -40,7 +44,7 @@ def setup_logging(debug: bool = False):
                 if hasattr(sys.stdout, 'buffer') else sys.stdout
             ),
             logging.FileHandler(
-                os.path.join(PROJECT_ROOT, "logs", "engine.log"),
+                os.path.join(logs_dir, "engine.log"),
                 encoding="utf-8",
             ),
         ],
@@ -56,8 +60,6 @@ def main():
                         help="Exit after this many pipeline frames (smoke tests)")
     args = parser.parse_args()
 
-    # Create logs directory
-    os.makedirs(os.path.join(PROJECT_ROOT, "logs"), exist_ok=True)
     setup_logging(args.debug)
     logger = logging.getLogger("airos")
 

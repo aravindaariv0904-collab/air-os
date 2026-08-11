@@ -10,12 +10,23 @@ import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 
+import shutil
+from config.paths import get_profiles_dir
+
 logger = logging.getLogger(__name__)
 
 REGISTRY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 SYSTEM_GESTURES_FILE = os.path.join(REGISTRY_DIR, "system_gestures.json")
 
-PROFILES_DIR = os.path.join(os.path.dirname(REGISTRY_DIR), "profiles")
+PROFILES_DIR = get_profiles_dir()
+SEED_PROFILES_FILE = os.path.join(os.path.dirname(REGISTRY_DIR), "profiles", "profiles.json")
+TARGET_PROFILES_FILE = os.path.join(PROFILES_DIR, "profiles.json")
+
+if not os.path.exists(TARGET_PROFILES_FILE) and os.path.exists(SEED_PROFILES_FILE):
+    try:
+        shutil.copy2(SEED_PROFILES_FILE, TARGET_PROFILES_FILE)
+    except Exception as e:
+        logger.warning(f"Could not seed profiles.json to APPDATA: {e}")
 CUSTOM_DIR = os.path.join(os.path.dirname(REGISTRY_DIR), "custom")
 
 

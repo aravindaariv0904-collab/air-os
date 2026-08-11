@@ -24,10 +24,11 @@ from gestures.recognition.matcher import GestureMatcher
 from gestures.recognition.template import (
     GestureTemplate, templates_to_json, templates_from_json,
 )
+from config.paths import get_gestures_dir
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STORE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "custom")
+DEFAULT_STORE_DIR = get_gestures_dir()
 DEFAULT_STORE_FILE = "gesture_templates.json"
 
 

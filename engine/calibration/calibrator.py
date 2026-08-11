@@ -12,10 +12,11 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional, List
 from enum import Enum, auto
 
+from config.paths import get_calibration_file, get_app_data_dir
+
 logger = logging.getLogger(__name__)
 
-CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config")
-CALIBRATION_FILE = os.path.join(CONFIG_DIR, "calibration.json")
+CALIBRATION_FILE = get_calibration_file()
 
 
 class CalibStep(Enum):
@@ -151,8 +152,7 @@ class CalibrationManager:
         elapsed = self._clock() - self._step_start
 
         if self._step == CalibStep.CHECK_CAMERA:
-            if num_hands >= 0:  # Camera is working
-                time.sleep(0.5)
+            if num_hands >= 0 and elapsed > 0.5:  # Camera is working
                 self._advance_step()
 
         elif self._step == CalibStep.POSITION:
@@ -232,7 +232,7 @@ class CalibrationManager:
 
     def save(self):
         """Save calibration to file."""
-        os.makedirs(CONFIG_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
         with open(CALIBRATION_FILE, "w") as f:
             json.dump(self._profile.to_dict(), f, indent=2)
         logger.info(f"Calibration saved to {CALIBRATION_FILE}")
