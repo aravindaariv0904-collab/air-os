@@ -127,6 +127,8 @@ class StateMachine:
         # ═══════════════════════════════════════════════════════════════
         # PINCH / DRAG state
         # ═══════════════════════════════════════════════════════════════
+        now = time.monotonic()
+
         if self._state == InteractionState.DRAG:
             if is_pinched:
                 actions.append("cursor_move")  # Continue drag — cursor tracks finger
@@ -134,13 +136,13 @@ class StateMachine:
                 # Pinch released — end drag
                 actions.append("mouse_up")
                 self._pinch_was_dragging = False
+                self._pinch_start_time = None
                 self._transition(InteractionState.POINTER)
             return actions
 
         if self._state == InteractionState.CLICK:
-            # Brief click state — transition back immediately
+            # Brief click state — transition back to POINTER
             self._transition(InteractionState.POINTER)
-            return actions
 
         # ═══════════════════════════════════════════════════════════════
         # POINTER state — main interaction state
@@ -152,12 +154,11 @@ class StateMachine:
                     self._transition(InteractionState.POINTER)
                 actions.append("cursor_move")
 
-                # Pinch → click or drag start
                 if is_pinched:
                     if not self._pinch_was_dragging:
-                        # First frame of pinch — start drag
                         actions.append("mouse_down")
                         self._pinch_was_dragging = True
+                        self._pinch_start_time = now
                         self._transition(InteractionState.DRAG)
                     return actions
                 else:
