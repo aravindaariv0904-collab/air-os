@@ -33,6 +33,10 @@ MODEL_FILENAME = "hand_landmarker.task"
 class HandTrackingResult:
     """Result from one frame of hand tracking."""
     timestamp: float = 0.0
+    frame_id: int = 0
+    capture_timestamp: float = 0.0
+    submit_timestamp: float = 0.0
+    result_timestamp: float = 0.0
     num_hands: int = 0
     landmarks: list = field(default_factory=list)       # List of (21, 3) np.ndarray
     handedness: list = field(default_factory=list)       # List of "Left"/"Right"
@@ -81,7 +85,7 @@ class HandTracker:
         tracker.initialize()
         
         # In your main loop:
-        tracker.process_frame(frame, timestamp_ms)
+        tracker.process_frame(frame, timestamp_ms, frame_id, capture_timestamp)
         
         # Get latest result (may be from a previous frame):
         result = tracker.get_latest_result()
@@ -92,6 +96,8 @@ class HandTracker:
         self._landmarker = None
         self._latest_result: Optional[HandTrackingResult] = None
         self._result_lock = threading.Lock()
+        self._pending_meta: dict[int, tuple[int, float, float]] = {}  # timestamp_ms -> (frame_id, capture_ts, submit_ts)
+        self._meta_lock = threading.Lock()
         self._inference_start: float = 0.0
         self._initialized = False
 
@@ -140,10 +146,28 @@ class HandTracker:
         Async callback from MediaPipe. Called from MediaPipe's internal thread.
         Store the result thread-safely.
         """
-        inference_time = (time.monotonic() - self._inference_start) * 1000
+        result_ts = time.monotonic()
+        
+        frame_id = 0
+        capture_ts = 0.0
+        submit_ts = 0.0
+        with self._meta_lock:
+            if timestamp_ms in self._pending_meta:
+                frame_id, capture_ts, submit_ts = self._pending_meta.pop(timestamp_ms)
+                # Keep map small: clean up stale keys older than 100 frames
+                if len(self._pending_meta) > 100:
+                    stale = [k for k in self._pending_meta.keys() if k < timestamp_ms - 1000]
+                    for k in stale:
+                        self._pending_meta.pop(k, None)
+
+        inference_time = (result_ts - (submit_ts if submit_ts > 0 else result_ts)) * 1000
 
         tracking_result = HandTrackingResult(
             timestamp=timestamp_ms / 1000.0,
+            frame_id=frame_id,
+            capture_timestamp=capture_ts,
+            submit_timestamp=submit_ts,
+            result_timestamp=result_ts,
             num_hands=len(result.hand_landmarks),
             inference_time_ms=inference_time,
         )
@@ -168,16 +192,28 @@ class HandTracker:
         with self._result_lock:
             self._latest_result = tracking_result
 
-    def process_frame(self, frame_bgr, timestamp_ms: int):
+    def process_frame(
+        self,
+        frame_bgr,
+        timestamp_ms: int,
+        frame_id: int = 0,
+        capture_timestamp: float = 0.0,
+    ):
         """
         Submit a frame for async inference. Non-blocking.
         
         Args:
             frame_bgr: BGR frame from OpenCV (will be converted to RGB for MediaPipe)
             timestamp_ms: Frame timestamp in milliseconds (must be monotonically increasing)
+            frame_id: Monotonically increasing frame ID
+            capture_timestamp: Timestamp when camera captured the frame
         """
         if not self._initialized or self._landmarker is None:
             return
+
+        submit_ts = time.monotonic()
+        with self._meta_lock:
+            self._pending_meta[timestamp_ms] = (frame_id, capture_timestamp, submit_ts)
 
         try:
             import mediapipe as mp
@@ -186,7 +222,7 @@ class HandTracker:
             frame_rgb = np.ascontiguousarray(frame_bgr[:, :, ::-1])
             # Use positional args — MediaPipe 0.10.x rejects keyword args here
             mp_image = mp.Image(mp.ImageFormat.SRGB, frame_rgb)
-            self._inference_start = time.monotonic()
+            self._inference_start = submit_ts
             self._landmarker.detect_async(mp_image, timestamp_ms)
         except Exception as e:
             logger.error(f"Error processing frame: {e}")

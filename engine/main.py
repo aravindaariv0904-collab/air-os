@@ -235,6 +235,7 @@ class AirOSEngine:
         """
         logger.info("Real-time pipeline started")
         last_result_timestamp = -1.0
+        last_frame_id = -1
 
         while self._running:
             loop_start = time.monotonic()
@@ -244,7 +245,7 @@ class AirOSEngine:
                 break
 
             # ── 1. Get latest frame ──────────────────────────────────
-            frame, frame_ts = self._camera.get_frame()
+            frame, frame_ts, frame_id = self._camera.get_frame()
             if frame is None:
                 time.sleep(0.001)
                 continue
@@ -252,14 +253,36 @@ class AirOSEngine:
 
             # ── 2. Submit to MediaPipe (non-blocking async) ──────────
             self._mp_timestamp_ms += 1  # Must increase monotonically
-            self._tracker.process_frame(frame, self._mp_timestamp_ms)
+            self._tracker.process_frame(
+                frame,
+                self._mp_timestamp_ms,
+                frame_id=frame_id,
+                capture_timestamp=frame_ts,
+            )
 
             # ── 3. Get latest tracking result ────────────────────────
             t_gesture_start = time.monotonic()
             result = self._tracker.get_latest_result()
 
-            if result is None or result.num_hands == 0:
-                # No hands — reset detectors and motion
+            if result is None:
+                self._handle_no_hands()
+                self._current_gesture = GestureType.NONE
+                self._current_confidence = 0.0
+                self._update_telemetry(result, 0.0, frame_ts)
+                self._sleep_to_target(loop_start)
+                continue
+
+            # Check if this result has already been processed in a previous loop iteration
+            if result.result_timestamp <= last_result_timestamp or (result.frame_id > 0 and result.frame_id == last_frame_id):
+                # Duplicate result — do not re-process motion or gestures
+                self._sleep_to_target(loop_start)
+                continue
+
+            last_result_timestamp = result.result_timestamp
+            last_frame_id = result.frame_id
+
+            if result.num_hands == 0:
+                # No hands detected in fresh frame — reset detectors and motion
                 self._handle_no_hands()
                 self._current_gesture = GestureType.NONE
                 self._current_confidence = 0.0

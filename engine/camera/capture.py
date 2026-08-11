@@ -84,6 +84,8 @@ class CameraCapture:
         self._cap: Optional[cv2.VideoCapture] = None
         self._latest_frame: Optional[cv2.typing.MatLike] = None
         self._latest_timestamp: float = 0.0
+        self._latest_frame_id: int = 0
+        self._frame_counter: int = 0
         self._lock = threading.Lock()
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -170,19 +172,21 @@ class CameraCapture:
             last_time = t1
 
             with self._lock:
+                self._frame_counter += 1
                 self._latest_frame = frame
                 self._latest_timestamp = t1
+                self._latest_frame_id = self._frame_counter
 
             self.metrics.update(elapsed)
 
-    def get_frame(self) -> Tuple[Optional[cv2.typing.MatLike], float]:
+    def get_frame(self) -> Tuple[Optional[cv2.typing.MatLike], float, int]:
         """
-        Get the latest available frame and its timestamp.
-        Returns (None, 0.0) if no frame is available yet.
+        Get the latest available frame, timestamp, and frame ID.
+        Returns (None, 0.0, 0) if no frame is available yet.
         This method is non-blocking and thread-safe.
         """
         with self._lock:
-            return self._latest_frame, self._latest_timestamp
+            return self._latest_frame, self._latest_timestamp, self._latest_frame_id
 
     def stop(self):
         """Stop the capture thread and release the camera."""
