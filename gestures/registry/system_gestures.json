@@ -1,0 +1,148 @@
+{
+  "version": "1.0",
+  "gestures": [
+    {
+      "id": "index_pointer",
+      "name": "Index Pointer",
+      "emoji": "\u261d\ufe0f",
+      "description": "Move cursor",
+      "type": "static_pose",
+      "enabled": true,
+      "system": true,
+      "action": "cursor_move",
+      "scope": "global",
+      "thresholds": {
+        "confirm_frames": 3,
+        "confidence": 0.75
+      }
+    },
+    {
+      "id": "pinch_click",
+      "name": "Pinch Click",
+      "emoji": "\ud83e\udd0f",
+      "description": "Left click",
+      "type": "pinch",
+      "enabled": true,
+      "system": true,
+      "action": "left_click",
+      "scope": "global",
+      "thresholds": {
+        "distance": 0.30,
+        "confirm_frames": 4,
+        "confidence": 0.75
+      }
+    },
+    {
+      "id": "pinch_drag",
+      "name": "Pinch Drag",
+      "emoji": "\ud83e\udd0f",
+      "description": "Click and drag",
+      "type": "pinch_movement",
+      "enabled": true,
+      "system": true,
+      "action": "drag",
+      "scope": "global"
+    },
+    {
+      "id": "scroll_up",
+      "name": "Scroll Up",
+      "emoji": "\u2191",
+      "description": "Scroll up",
+      "type": "directional_movement",
+      "enabled": true,
+      "system": true,
+      "action": "scroll_up",
+      "scope": "global",
+      "thresholds": {
+        "velocity": 0.15,
+        "confirm_frames": 3
+      }
+    },
+    {
+      "id": "scroll_down",
+      "name": "Scroll Down",
+      "emoji": "\u2193",
+      "description": "Scroll down",
+      "type": "directional_movement",
+      "enabled": true,
+      "system": true,
+      "action": "scroll_down",
+      "scope": "global",
+      "thresholds": {
+        "velocity": 0.15,
+        "confirm_frames": 3
+      }
+    },
+    {
+      "id": "swipe_left",
+      "name": "Swipe Left",
+      "emoji": "\u2190",
+      "description": "Navigate back",
+      "type": "swipe",
+      "enabled": true,
+      "system": true,
+      "action": "navigate_back",
+      "scope": "global",
+      "thresholds": {
+        "displacement": 0.18,
+        "velocity": 0.35,
+        "confirm_frames": 4
+      }
+    },
+    {
+      "id": "swipe_right",
+      "name": "Swipe Right",
+      "emoji": "\u2192",
+      "description": "Navigate forward",
+      "type": "swipe",
+      "enabled": true,
+      "system": true,
+      "action": "navigate_forward",
+      "scope": "global",
+      "thresholds": {
+        "displacement": 0.18,
+        "velocity": 0.35,
+        "confirm_frames": 4
+      }
+    },
+    {
+      "id": "open_palm",
+      "name": "Open Palm",
+      "emoji": "\ud83d\udd90\ufe0f",
+      "description": "Pause AirOS",
+      "type": "static_pose",
+      "enabled": true,
+      "system": true,
+      "action": "pause",
+      "scope": "global",
+      "thresholds": {
+        "hold_duration": 0.8,
+        "confirm_frames": 8
+      }
+    },
+    {
+      "id": "two_hands",
+      "name": "Two Hands",
+      "emoji": "\ud83d\udc50",
+      "description": "Enter keyboard mode",
+      "type": "two_hand",
+      "enabled": true,
+      "system": true,
+      "action": "enter_keyboard",
+      "scope": "global",
+      "thresholds": {
+        "hold_duration": 1.5,
+        "confirm_frames": 15
+      }
+    }
+  ],
+  "custom_gestures": [],
+  "profiles": [
+    {
+      "id": "default",
+      "name": "Default",
+      "active": true,
+      "gesture_overrides": {}
+    }
+  ]
+}

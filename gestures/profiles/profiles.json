@@ -1,0 +1,73 @@
+{
+  "profiles": [
+    {
+      "id": "default",
+      "name": "Default",
+      "active": true,
+      "app_matchers": [],
+      "gesture_overrides": {}
+    },
+    {
+      "id": "browser",
+      "name": "Browser",
+      "active": false,
+      "app_matchers": [
+        "chrome.exe",
+        "msedge.exe",
+        "firefox.exe",
+        "brave.exe"
+      ],
+      "gesture_overrides": {
+        "swipe_left": {
+          "thresholds": {
+            "displacement": 0.15,
+            "velocity": 0.3
+          }
+        },
+        "swipe_right": {
+          "thresholds": {
+            "displacement": 0.15,
+            "velocity": 0.3
+          }
+        }
+      }
+    },
+    {
+      "id": "media",
+      "name": "Media Player",
+      "active": false,
+      "app_matchers": [
+        "spotify.exe",
+        "vlc.exe",
+        "wmplayer.exe",
+        "mpv.exe"
+      ],
+      "gesture_overrides": {
+        "swipe_left": {
+          "action": "media_prev"
+        },
+        "swipe_right": {
+          "action": "media_next"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "name": "P1",
+      "active": false,
+      "app_matchers": [
+        "app.exe"
+      ],
+      "gesture_overrides": {}
+    },
+    {
+      "id": "p2",
+      "name": "P2",
+      "active": false,
+      "app_matchers": [
+        "app.exe editor"
+      ],
+      "gesture_overrides": {}
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+2026-08-11 20:41:40,205 [airos] INFO: ==================================================
+2026-08-11 20:41:40,209 [airos] INFO:   AirOS Engine v0.1.0
+2026-08-11 20:41:40,211 [airos] INFO: ==================================================
+2026-08-11 20:41:40,406 [input.windows.send_input] INFO: Screen size: 1536x864
+2026-08-11 20:41:40,417 [airos] INFO: Safety hotkey: Ctrl+Alt+A to stop
+2026-08-11 20:41:40,421 [engine.main] INFO: === AirOS Engine Starting ===
+2026-08-11 20:41:40,423 [input.mouse.cursor] INFO: CursorEngine initialized: screen=1536x864, region=(0.10,0.10)-(0.90,0.85)
+2026-08-11 20:41:41,024 [engine.tracking.hand_tracker] INFO: Initializing MediaPipe HandLandmarker...
+2026-08-11 20:41:41,073 [engine.tracking.hand_tracker] INFO: HandLandmarker initialized successfully
+2026-08-11 20:41:41,074 [engine.camera.capture] INFO: Opening camera 0 (DirectShow backend)
+2026-08-11 20:41:42,269 [engine.camera.capture] INFO: Camera opened: 640x480 @ 30.00003000003 FPS (requested 640x480 @ 30)
+2026-08-11 20:41:42,270 [engine.camera.capture] INFO: Camera capture thread started
+2026-08-11 20:41:42,270 [engine.main] INFO: Camera: {'index': 0, 'width': 640, 'height': 480, 'fps': 30.00003000003, 'backend': 'DirectShow'}
+2026-08-11 20:41:42,270 [engine.main] INFO: Real-time pipeline started

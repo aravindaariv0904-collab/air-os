@@ -1,0 +1,19 @@
+{
+  "region_left": 0.5,
+  "region_right": 0.5,
+  "region_top": 0.5,
+  "region_bottom": 0.5,
+  "pinch_threshold": 0.30000000000000004,
+  "release_threshold": 0.45000000000000007,
+  "scroll_velocity_threshold": 0.15,
+  "swipe_displacement_threshold": 0.18,
+  "swipe_velocity_threshold": 0.35,
+  "air_tap_threshold": 0.04,
+  "preferred_hand": "right",
+  "sensitivity": 1.0,
+  "smoothing_min_cutoff": 1.2,
+  "smoothing_beta": 0.008,
+  "calibrated": true,
+  "calibration_date": "2026-08-11T23:20:18.569429",
+  "version": "1.0"
+}

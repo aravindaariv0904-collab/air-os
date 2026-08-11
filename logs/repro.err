@@ -1,0 +1,11 @@
+INFO:engine.tracking.hand_tracker:Initializing MediaPipe HandLandmarker...
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1786461061.183304   30012 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1786461061.201621   30012 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+INFO:engine.tracking.hand_tracker:HandLandmarker initialized successfully
+INFO:engine.camera.capture:Opening camera 0 (DirectShow backend)
+INFO:engine.camera.capture:Camera opened: 640x480 @ 30.00003000003 FPS (requested 640x480 @ 30)
+INFO:engine.camera.capture:Camera capture thread started
+INFO:engine.camera.capture:Camera capture stopped
+INFO:engine.tracking.hand_tracker:HandTracker closed
