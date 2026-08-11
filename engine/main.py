@@ -47,6 +47,8 @@ from gestures.profiles.profile_manager import ProfileManager
 from input.windows.foreground import ForegroundAppDetector
 from input.action_registry import ActionRegistry
 
+from engine.telemetry.latency import LatencyTracker, StageTimestamps, LatencyBreakdown
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +74,7 @@ class Telemetry:
     calibration: dict = field(default_factory=dict)
     profile: str = "default"
     foreground_app: str = ""
+    latency_breakdown: LatencyBreakdown = field(default_factory=LatencyBreakdown)
 
     def to_dict(self) -> dict:
         return {
@@ -92,6 +95,10 @@ class Telemetry:
                 "inference_ms": round(self.inference_ms, 2),
                 "gesture_ms": round(self.gesture_ms, 2),
                 "total_ms": round(self.total_ms, 2),
+                "p50_ms": round(self.latency_breakdown.p50_ms, 2),
+                "p95_ms": round(self.latency_breakdown.p95_ms, 2),
+                "p99_ms": round(self.latency_breakdown.p99_ms, 2),
+                "detail": self.latency_breakdown.to_dict(),
             },
             "system": {
                 "cpu_percent": round(self.cpu_percent, 1),
@@ -178,10 +185,11 @@ class AirOSEngine:
         self._profile_manager.on_profile_changed(self._on_profile_changed)
         self._apply_gesture_thresholds()
 
-        # Telemetry state
+        # Telemetry & Latency state
         self._telemetry = Telemetry()
         self._telemetry_lock = threading.Lock()
         self._last_telemetry_time = 0.0
+        self._latency_tracker = LatencyTracker()
 
         # Performance tracking
         self._frame_count = 0
@@ -251,8 +259,11 @@ class AirOSEngine:
                 continue
             self._frame_count += 1
 
+            ts_stage = StageTimestamps(frame_id=frame_id, capture_ts=frame_ts)
+
             # ── 2. Submit to MediaPipe (non-blocking async) ──────────
             self._mp_timestamp_ms += 1  # Must increase monotonically
+            ts_stage.submit_ts = time.monotonic()
             self._tracker.process_frame(
                 frame,
                 self._mp_timestamp_ms,
@@ -280,6 +291,7 @@ class AirOSEngine:
 
             last_result_timestamp = result.result_timestamp
             last_frame_id = result.frame_id
+            ts_stage.tracking_result_ts = result.result_timestamp
 
             if result.num_hands == 0:
                 # No hands detected in fresh frame — reset detectors and motion
@@ -312,6 +324,7 @@ class AirOSEngine:
             # ── 5. Update motion estimator ───────────────────────────
             wrist_pos = wrist_position(landmarks)
             motion = self._motion.update(wrist_pos[0], wrist_pos[1], time.monotonic())
+            ts_stage.landmark_ts = time.monotonic()
 
             # ── 4c. App profile auto-switch (rate-limited ~1 Hz) ─────
             self._profile_manager.update(time.monotonic())
@@ -379,8 +392,8 @@ class AirOSEngine:
                 self._current_confidence = 0.0
 
             self._current_gesture = current_gesture
-
-            gesture_ms = (time.monotonic() - t_gesture_start) * 1000
+            ts_stage.gesture_ts = time.monotonic()
+            gesture_ms = (ts_stage.gesture_ts - t_gesture_start) * 1000
 
             # ── 7. Run state machine ─────────────────────────────────
             if self._enabled:
@@ -393,18 +406,26 @@ class AirOSEngine:
                     speed=motion.speed,
                     gesture_event=gesture_event,
                 )
+                ts_stage.state_ts = time.monotonic()
 
                 # ── 8. Execute actions ───────────────────────────────
                 if actions:
                     self._execute_actions(actions, landmarks, gesture_event)
+                ts_stage.input_ts = time.monotonic()
+            else:
+                ts_stage.state_ts = time.monotonic()
+                ts_stage.input_ts = ts_stage.state_ts
 
             # ── 8b. Virtual keyboard mode ────────────────────────────
             if self._state_machine.state == InteractionState.KEYBOARD:
                 self._run_keyboard(landmarks, ts)
 
+            # Record full stage breakdown
+            latency_breakdown = self._latency_tracker.record_frame(ts_stage)
+
             # ── 9. Telemetry snapshot ────────────────────────────────
             total_ms = (time.monotonic() - loop_start) * 1000
-            self._update_telemetry(result, gesture_ms, frame_ts, total_ms)
+            self._update_telemetry(result, gesture_ms, frame_ts, total_ms, latency_breakdown)
 
             # ── Sleep to maintain target FPS ─────────────────────────
             self._sleep_to_target(loop_start)
@@ -541,7 +562,14 @@ class AirOSEngine:
                     except Exception:
                         pass
 
-    def _update_telemetry(self, result, gesture_ms: float, frame_ts: float, total_ms: float = 0.0):
+    def _update_telemetry(
+        self,
+        result,
+        gesture_ms: float,
+        frame_ts: float,
+        total_ms: float = 0.0,
+        latency_breakdown: Optional[LatencyBreakdown] = None,
+    ):
         """Update telemetry snapshot. Rate-limited to 10 Hz."""
         now = time.monotonic()
         if now - self._last_telemetry_time < 0.1:  # 10 Hz
@@ -559,6 +587,9 @@ class AirOSEngine:
                 ram = self._process.memory_info().rss / (1024 * 1024)
             except Exception:
                 pass
+
+        if latency_breakdown is None:
+            latency_breakdown = self._latency_tracker.current_breakdown
 
         with self._telemetry_lock:
             self._telemetry = Telemetry(
@@ -581,6 +612,7 @@ class AirOSEngine:
                 calibration=self.get_calibration_status(),
                 profile=self._profile_manager.active_profile_id,
                 foreground_app=self._profile_manager.last_app,
+                latency_breakdown=latency_breakdown,
             )
 
         if self._telemetry_callback:
