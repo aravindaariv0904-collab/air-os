@@ -250,17 +250,31 @@ class TestCalibration:
     def test_calibration_flow_to_complete(self):
         """Feed synthetic samples through the workflow until complete."""
         from engine.calibration.calibrator import CalibrationManager, CalibStep
-        cal = CalibrationManager(clock=FakeClock())
-        cal.start()
-        lm = np.zeros((21, 3), dtype=np.float32)
-        lm[0] = [0.5, 0.5, 0.0]
-        done = False
-        for _ in range(6000):
-            done = cal.update(lm, num_hands=1, wrist_pos=[0.5, 0.5], pinch_dist=0.2)
-            if done:
-                break
-        assert cal.current_step == CalibStep.COMPLETE or cal.profile.calibrated, \
-            f"Calibration did not complete. Step={cal.current_step}"
+        import engine.calibration.calibrator as calib_mod
+        import tempfile, os
+        # Isolate from real AppData
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            tmp_path = tf.name
+        original = calib_mod.CALIBRATION_FILE
+        calib_mod.CALIBRATION_FILE = tmp_path
+        try:
+            cal = CalibrationManager(clock=FakeClock())
+            cal.start()
+            lm = np.zeros((21, 3), dtype=np.float32)
+            lm[0] = [0.5, 0.5, 0.0]
+            done = False
+            for _ in range(6000):
+                done = cal.update(lm, num_hands=1, wrist_pos=[0.5, 0.5], pinch_dist=0.2)
+                if done:
+                    break
+            assert cal.current_step == CalibStep.COMPLETE or cal.profile.calibrated, \
+                f"Calibration did not complete. Step={cal.current_step}"
+        finally:
+            calib_mod.CALIBRATION_FILE = original
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # =============================================================================

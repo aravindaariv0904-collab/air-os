@@ -21,25 +21,42 @@ let engineProcess = null
 let ws = null // WebSocket to Python engine
 let engineState = 'stopped' // 'stopped' | 'starting' | 'running' | 'paused' | 'error'
 
-// ─── Engine Process Management ───────────────────────────────────────────────
+function getEngineExecution() {
+  // 1. Packaged production executable in extraResources
+  const packagedExe = path.join(process.resourcesPath, 'AirOSEngine', 'AirOSEngine.exe')
+  if (fs.existsSync(packagedExe)) {
+    return { command: packagedExe, args: [], cwd: path.dirname(packagedExe) }
+  }
+
+  // 2. Standalone compiled engine in project dist/
+  const distExe = path.join(PROJECT_ROOT, 'dist', 'AirOSEngine', 'AirOSEngine.exe')
+  if (fs.existsSync(distExe)) {
+    return { command: distExe, args: [], cwd: path.dirname(distExe) }
+  }
+
+  // 3. Fallback to venv for development
+  return { command: PYTHON_EXE, args: [ENGINE_SCRIPT], cwd: PROJECT_ROOT }
+}
 
 function startEngine() {
   if (engineProcess) return
 
-  if (!fs.existsSync(PYTHON_EXE)) {
-    console.error('Python venv not found:', PYTHON_EXE)
-    sendToRenderer('engine-error', { message: 'Python environment not found. Run setup.bat first.' })
+  const execConfig = getEngineExecution()
+
+  if (!fs.existsSync(execConfig.command)) {
+    console.error('AirOS Engine executable/python not found:', execConfig.command)
+    sendToRenderer('engine-error', { message: 'AirOS Engine not found.' })
     return
   }
 
   engineState = 'starting'
-  console.log('Starting AirOS engine...')
+  console.log('Starting AirOS engine:', execConfig.command)
 
   fs.mkdirSync(LOGS_DIR, { recursive: true })
   const logFile = fs.createWriteStream(path.join(LOGS_DIR, 'electron-engine.log'), { flags: 'a' })
 
-  engineProcess = spawn(PYTHON_EXE, [ENGINE_SCRIPT], {
-    cwd: PROJECT_ROOT,
+  engineProcess = spawn(execConfig.command, execConfig.args, {
+    cwd: execConfig.cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env },
   })

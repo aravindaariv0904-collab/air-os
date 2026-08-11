@@ -148,21 +148,28 @@ class StateMachine:
         # POINTER state — main interaction state
         # ═══════════════════════════════════════════════════════════════
         if self._state in (InteractionState.IDLE, InteractionState.POINTER):
-            # Detect index pointer
+            # Transition to POINTER when hand is visible (with or without index pointer)
+            if self._state != InteractionState.POINTER:
+                self._transition(InteractionState.POINTER)
+
+            # Cursor tracks index fingertip when index is extended
             if has_index_pointer:
-                if self._state != InteractionState.POINTER:
-                    self._transition(InteractionState.POINTER)
                 actions.append("cursor_move")
 
-                if is_pinched:
-                    if not self._pinch_was_dragging:
-                        actions.append("mouse_down")
-                        self._pinch_was_dragging = True
-                        self._pinch_start_time = now
-                        self._transition(InteractionState.DRAG)
-                    return actions
-                else:
-                    self._pinch_was_dragging = False
+            # Pinch → drag start (allowed from any hand pose, not just index-only)
+            # Geometrically: when pinching, the index tip touches thumb → is_index_only is False.
+            # We must allow drag entry from pinch regardless of pointer state.
+            if is_pinched:
+                if not self._pinch_was_dragging:
+                    # First frame of pinch — move cursor to current pos then start drag
+                    if "cursor_move" not in actions:
+                        actions.append("cursor_move")
+                    actions.append("mouse_down")
+                    self._pinch_was_dragging = True
+                    self._transition(InteractionState.DRAG)
+                return actions
+            else:
+                self._pinch_was_dragging = False
 
         # ═══════════════════════════════════════════════════════════════
         # SCROLL

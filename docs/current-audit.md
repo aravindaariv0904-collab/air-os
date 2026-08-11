@@ -1,106 +1,372 @@
-# AirOS — Comprehensive System Audit & Architectural Assessment
+# AirOS — Complete Codebase Audit
 
-**Document ID**: `AUDIT-2026-08-11`  
-**Target Environment**: Windows 10/11 (16GB RAM, RTX 4050 Laptop GPU, Integrated DirectShow Webcam)  
-**Goal**: Transform current prototype into a reliable, low-latency, packaged Windows Desktop Application.
+**Document ID**: `AUDIT-2026-08-11-FULL`
+**Audited By**: Senior Engineering Team
+**Target**: Windows 10/11, 16GB RAM, RTX 4050 Laptop GPU, Built-in Webcam, no depth sensor
+**Audit Date**: 2026-08-11
+**Status**: PHASE 1 COMPLETE
 
 ---
 
-## 1. Current Architecture Overview
+## Executive Summary
+
+AirOS has a **solid architectural foundation** with well-structured Python engine code and a functioning
+React/Electron UI shell. However, it is **not installable or runnable** as a standalone Windows desktop
+application today. The Python venv is present and all dependencies are installed. 79/80 unit tests pass.
+The critical blocker is that the Electron UI has no compiled Vite bundle — `dist/index.html` is a
+placeholder stub (806 bytes). The engine itself cannot be packaged as a standalone executable yet.
+
+**Current State: Developer prototype, not a user-installable application.**
+
+---
+
+## 1. Repository Structure
 
 ```
-[ Built-in Webcam ]
-        │ (OpenCV DirectShow / CAP_DSHOW, 640x480)
-        ▼
-[ CameraCapture ] ──── Thread-safe Latest Frame Buffer (Non-blocking)
-        │
-        ▼
-[ HandTracker ] ───── MediaPipe HandLandmarker Tasks API (LIVE_STREAM Async Callback)
-        │
-        ▼
-[ Geometry & Motion ] ── 21-Landmark Processing, One Euro Filter, Velocity/Displacement
-        │
-        ▼
-[ Gesture Detectors ] ── Pinch, Scroll, Swipe, Open Palm, Two-Hand, Gesture Studio Matcher
-        │
-        ▼
-[ State Machine ] ───── InteractionState (IDLE, POINTER, DRAG, SCROLL, SWIPE, PAUSED, CALIBRATION, KEYBOARD)
-        │
-        ▼
-[ Action Registry ] ─── Controlled Action Mappings (Mouse, Keyboard, Navigation, Media)
-        │
-        ▼
-[ Windows Input ] ───── Win32 SendInput (ctypes, <1ms synchronous injection)
-
-    ┌────────────────────────────────────────────────────────────┐
-    │ Independent IPC & UI Layer                                 │
-    │ Python Engine ──(Async WebSocket :7890)──> Electron/React   │
-    └────────────────────────────────────────────────────────────┘
+air-os/
+├── engine/                  # Python real-time engine
+│   ├── main.py              # Engine orchestrator (745 lines)
+│   ├── camera/capture.py    # OpenCV DirectShow capture thread
+│   ├── tracking/hand_tracker.py  # MediaPipe Tasks API wrapper
+│   ├── landmarks/geometry.py     # 21-point hand geometry
+│   ├── motion/estimator.py       # Velocity, displacement history
+│   ├── filtering/one_euro.py     # Adaptive low-pass filter
+│   ├── gestures/recognizer.py    # Pinch, Scroll, Swipe, Palm, TwoHand
+│   ├── state/machine.py          # 10-state interaction FSM
+│   ├── calibration/calibrator.py # Guided calibration manager
+│   └── telemetry/               # EMPTY — __init__.py only
+│
+├── input/                   # Windows input injection
+│   ├── action_registry.py   # Controlled action vocabulary (30+ actions)
+│   ├── mouse/cursor.py      # Cursor engine (region → screen pixels)
+│   ├── windows/send_input.py     # Win32 SendInput via ctypes
+│   ├── windows/foreground.py     # GetForegroundWindow wrapper
+│   └── keyboard/            # EMPTY — __init__.py only
+│
+├── gestures/                # Gesture management layer
+│   ├── recognition/studio.py     # GestureStudio facade
+│   ├── recognition/recorder.py   # Frame sequence recorder
+│   ├── recognition/matcher.py    # DTW-based matcher
+│   ├── recognition/template.py   # GestureTemplate + JSON serialization
+│   ├── registry/manager.py       # GestureRegistry (system gesture defs)
+│   ├── profiles/profile_manager.py  # App-specific profile switching
+│   ├── conflicts/           # EMPTY — __init__.py only
+│   └── custom/              # EMPTY — runtime template storage dir
+│
+├── keyboard/                # Virtual keyboard
+│   └── air_tap/tap_detector.py   # QWERTY layout + AirTapDetector + VirtualKeyboard
+│
+├── ipc/server.py            # WebSocket IPC server (localhost:7890)
+│
+├── apps/desktop/            # Electron + React UI
+│   ├── electron/main.js     # Electron main process
+│   ├── src/App.tsx          # React shell (4 pages: Dashboard, Gestures, Calibrate, Settings)
+│   ├── dist/                # WARNING: 806-byte placeholder stub, NOT a real build
+│   ├── package.json         # electron@33, react@18, vite@5
+│   └── node_modules/        # Present and installed
+│
+├── config/calibration.json  # User data stored in project dir (WRONG)
+├── venv/                    # Python 3.11.15 with all deps installed
+├── requirements.txt         # mediapipe, opencv, numpy, websockets, psutil, pywin32, pynput
+├── run_engine.py            # CLI entry point with IPC + hotkey setup
+├── assets/models/           # WARNING: hand_landmarker.task NOT present (downloaded on first run)
+├── tests/unit/              # 80 tests (79 pass, 1 fail)
+├── benchmarks/              # EMPTY
+└── docs/                    # architecture.md, research.md, current-audit.md (this file)
 ```
 
 ---
 
-## 2. Component Status Classification
+## 2. Component Status
 
-### A. Working & Validated Components (Passed 81/81 Automated Tests)
-1. **One Euro Filter (`engine/filtering/one_euro.py`)**: Mathematically sound dual-cutoff adaptive low-pass filter (prevents jitter at low speed, high responsiveness at high speed).
-2. **Landmark Geometry Utilities (`engine/landmarks/geometry.py`)**: 21-point hand geometry calculations, pinch distance, index pointer isolation, and open palm verification.
-3. **Win32 Input Adapter (`input/windows/send_input.py`)**: Native `SendInput` binding for mouse clicks, cursor motion, scroll wheel, virtual keypresses, and Unicode text injection.
-4. **State Machine (`engine/state/machine.py`)**: 10-state interaction state machine with debouncing and state transitions.
-5. **Virtual Keyboard Core (`keyboard/air_tap/tap_detector.py`)**: QWERTY layout grid, key targeting, and Z-axis air-tap detector.
-6. **Gesture Studio Core (`gestures/recognition/studio.py`)**: DTW-like landmark sequence recorder, resampler, matcher, and template persistence.
-7. **Profile & Registry System (`gestures/profiles/profile_manager.py`)**: Foreground window detection (`GetForegroundWindow`) and application-specific profile lookup.
+### A. Working Components (Verified by Tests)
 
-### B. Incomplete or Broken Components
-1. **Frame Result Synchronization (`engine/main.py`)**:
-   - `HandTracker.get_latest_result()` returns stale results if MediaPipe hasn't published a new frame result. `engine/main.py` processes duplicate results on consecutive loop ticks, artificially skewing velocity/motion calculations.
-2. **Cursor Engine Multi-Monitor & Sensitivity (`input/mouse/cursor.py`)**:
-   - Virtual screen bounds detection assumes `virtual_left = 0` and `virtual_top = 0`. Negative origins (monitors positioned left/top of primary screen) result in wrong coordinates and clamping.
-   - Sensitivity currently acts as a global scalar on absolute normalized coordinates rather than gain relative to a control reference point.
-3. **Latency Instrumentation (`engine/main.py`)**:
-   - Loop duration is currently treated as total latency. Intermediate timestamps (`capture_ts`, `submit_ts`, `tracking_result_ts`, `filter_ts`, `input_inject_ts`) and latency percentiles (P50, P95, P99) are unmeasured.
-4. **Fixed 30 FPS Loop Throttling (`engine/main.py`)**:
-   - `TARGET_LOOP_FPS = 30` forces sleeping after every frame, capping performance artificially even when camera/processing can run faster.
-5. **Config & Data Storage Location (`config/`, `gestures/`)**:
-   - User profile JSON, calibration profiles, and gesture templates write directly into the repository folder rather than `%APPDATA%\AirOS\`.
-6. **Production Packaging (`apps/desktop/electron/main.js`)**:
-   - Hardcoded path to `venv/Scripts/python.exe` inside repository root. Inability to run standalone without Python environment installed.
+| Component | File | Notes |
+|-----------|------|-------|
+| One Euro Filter 2D | engine/filtering/one_euro.py | Correct adaptive filter |
+| Landmark Geometry | engine/landmarks/geometry.py | 21-point ops, pinch, palm detection |
+| Motion Estimator | engine/motion/estimator.py | Velocity, acceleration, displacement |
+| Windows SendInput | input/windows/send_input.py | ctypes Win32 API, multi-monitor flags |
+| Pinch Detector | engine/gestures/recognizer.py | 4-frame confirm + hysteresis |
+| Scroll Detector | engine/gestures/recognizer.py | Velocity threshold + cooldown |
+| Swipe Detector | engine/gestures/recognizer.py | Displacement + axis ratio |
+| Open Palm Detector | engine/gestures/recognizer.py | Hold duration + still threshold |
+| Two Hand Detector | engine/gestures/recognizer.py | 1.5s hold requirement |
+| Gesture Studio Core | gestures/recognition/studio.py | Record, save, match (DTW-like) |
+| Profile Manager | gestures/profiles/profile_manager.py | App detection + profile switch |
+| IPC Server | ipc/server.py | WebSocket localhost:7890, thread-safe |
+| Action Registry | input/action_registry.py | 30+ safe actions, no shell commands |
+| Camera Capture | engine/camera/capture.py | DirectShow, latest-frame thread |
+| Hand Tracker | engine/tracking/hand_tracker.py | MediaPipe Tasks LIVE_STREAM mode |
+
+### B. Partially Working (Bugs Present)
+
+| Component | Issue |
+|-----------|-------|
+| Cursor Engine | Sensitivity model broken (absolute multiplication, not delta gain) |
+| State Machine | Drag entry requires index-pointer + pinch simultaneously (impossible geometry) |
+| Calibration | Contains time.sleep() that blocks real-time loop |
+| Virtual Keyboard | Logic works but no UI overlay exists yet |
+
+### C. Not Built / Not Configured
+
+| Component | Status |
+|-----------|--------|
+| Vite frontend build | NOT BUILT — dist/index.html is 806-byte stub |
+| PyInstaller packaging | NOT CONFIGURED — no .spec file |
+| electron-builder production | INCOMPLETE — no extraResources for engine |
+| Gesture conflict detection | EMPTY — gestures/conflicts/ has only __init__.py |
+| Floating overlay | EMPTY — apps/overlay/ is empty |
+| Benchmarks | EMPTY — benchmarks/ has no scripts |
+| Gesture validation workflow | NOT IMPLEMENTED |
+| Profile import/export | NOT IMPLEMENTED |
 
 ---
 
-## 3. Critical Bugs & Risks
+## 3. Critical Bugs
 
-| Category | Issue Description | Impact | Priority |
-| :--- | :--- | :--- | :--- |
-| **Sync** | Duplicate MediaPipe result processing | Distorts gesture velocity and temporal confirmation | **CRITICAL (P0)** |
-| **Display** | Multi-monitor virtual desktop offset unhandled | Cursor fails or jumps when secondary monitor is left/above | **CRITICAL (P0)** |
-| **Packaging** | Hardcoded `venv` path in Electron main process | Application fails on standard user laptops without dev setup | **CRITICAL (P0)** |
-| **Performance** | Hardcoded 30 FPS sleep loop | Adds latency and caps response rate | **HIGH (P1)** |
-| **Storage** | Writes user settings to project source folder | Permission failure when installed to `%ProgramFiles%` | **HIGH (P1)** |
-| **Security** | WebSocket server lacks session authentication token | Unauthenticated local web applications could send control commands | **HIGH (P1)** |
+### BUG-001: Stale MediaPipe Result Processing
+**File**: engine/main.py lines 259-268
+**Severity**: HIGH
+
+`HandTracker.get_latest_result()` returns the same result if MediaPipe hasn't finished a new
+inference. The variable `last_result_timestamp = -1.0` is declared at line 237 but never used
+as a gate. Duplicate results cause:
+- Velocity computed from identical timestamps (zero or wrong)
+- Gesture confirm counters inflate from duplicate frames
+- Scroll/swipe may trigger multiple times from one hand movement
+
+**Fix**: Skip result if `result.timestamp <= last_processed_result_timestamp`.
+
+### BUG-002: Cursor Sensitivity Multiplies Absolute Position
+**File**: input/mouse/cursor.py lines 163-164
+**Severity**: HIGH
+
+```python
+screen_x = int(filtered_x * self.config.screen_width * self.config.sensitivity)
+```
+
+Multiplying absolute normalized position [0,1] by sensitivity means:
+- sensitivity=0.5 → cursor can only reach the left/top quadrant of screen
+- sensitivity=2.0 → cursor jumps far off-screen from center
+
+**Fix**: Use delta-based gain: `delta = position - reference; screen = center + delta * sensitivity * scale`
+
+### BUG-003: Multi-Monitor Virtual Screen Origin Not Handled
+**File**: input/mouse/cursor.py lines 103-107
+**Severity**: HIGH
+
+`SM_XVIRTUALSCREEN=76` and `SM_YVIRTUALSCREEN=77` (virtual desktop origin offsets) are not read.
+When a secondary monitor sits left/above the primary, the virtual desktop origin is negative.
+The cursor mapping assumes origin=(0,0) which is wrong.
+
+**Fix**: Read SM_XVIRTUALSCREEN / SM_YVIRTUALSCREEN and apply as offsets.
+
+### BUG-004: time.sleep() in Real-Time Calibration Loop
+**File**: engine/calibration/calibrator.py line 155
+**Severity**: HIGH
+
+```python
+if num_hands >= 0:
+    time.sleep(0.5)  # blocks the engine main thread for 500ms
+    self._advance_step()
+```
+
+This freezes camera capture, gesture processing, and IPC for half a second.
+
+**Fix**: Use elapsed-time check instead: `if elapsed >= 0.5: self._advance_step()`
+
+### BUG-005: State Machine Drag Entry Requires Impossible Geometry
+**File**: engine/state/machine.py lines 148-162
+**Severity**: HIGH (1 unit test FAILING)
+
+Drag entry is gated on `has_index_pointer AND is_pinched`. But index-pointer means only the
+index finger is extended, and pinch means index tip touches thumb tip. These are geometrically
+mutually exclusive. The failing test `test_pinch_during_pointer_enters_drag` confirms this.
+
+**Fix**: Allow drag entry from pinch state without requiring strict index-only pointer.
+
+### BUG-006: Electron Main Hardcodes venv Path
+**File**: apps/desktop/electron/main.js lines 13-14
+**Severity**: CRITICAL
+
+```javascript
+const PYTHON_EXE = path.join(PROJECT_ROOT, 'venv', 'Scripts', 'python.exe')
+```
+
+In any packaged/installed build, the venv directory does not exist. This always fails in production.
+
+**Fix**: Launch a bundled AirOSEngine.exe from extraResources instead.
+
+### BUG-007: Vite Frontend Not Built
+**File**: apps/desktop/dist/index.html (806 bytes)
+**Severity**: CRITICAL
+
+The dist folder contains only a placeholder. The React application has never been compiled.
+Production mode Electron loads this empty file and shows nothing.
+
+**Fix**: Run `npm run build` in apps/desktop/ before packaging.
+
+### BUG-008: Config Written to Project Source Directory
+**File**: engine/calibration/calibrator.py line 17, gestures/recognition/studio.py line 30
+**Severity**: HIGH
+
+Both write user data into the project source tree. When installed to Program Files:
+- Permission errors (non-admin cannot write to Program Files)
+- Data lost on application update
+
+**Fix**: Use `%APPDATA%\AirOS\` for config, calibration, gestures, profiles, logs.
 
 ---
 
-## 4. Recommended 21-Phase Action Plan
+## 4. Architecture — What is Correct
 
-1. **Phase 1: Existing Code Audit** — *[COMPLETED]* Created `docs/current-audit.md`.
-2. **Phase 2: Fix Frame & Result Synchronization** — Implement strict monotonically increasing frame IDs and result timestamp validation to drop duplicate inference results.
-3. **Phase 3: Fix Latency Instrumentation** — Add microsecond per-stage telemetry (`capture`, `submit`, `tracking`, `filtering`, `gesture`, `injection`) and P50/P95/P99 latency calculations.
-4. **Phase 4: Fix Cursor & Windows Multi-Monitor Input** — Support negative `SM_XVIRTUALSCREEN`/`SM_YVIRTUALSCREEN` bounds and relative gain sensitivity mapping.
-5. **Phase 5: Fix Pinch, Click, & Drag** — Implement temporal pinch approach/confirm/release pipeline and prevent conflicting gestures during drag.
-6. **Phase 6: Fix Scroll & Swipe** — Implement velocity-proportional relative scroll and directional displacement swipe filtering with proper cooldowns.
-7. **Phase 7: Fix Gesture Arbitration & State Machine** — Centralize gesture arbitration with strict safety priority hierarchy (Emergency Stop > Pause > Calibration > Drag > Click > Nav > Pointer).
-8. **Phase 8: Complete Guided Calibration** — Interactive step verification (Camera -> Positioning -> Range -> Pinch -> Palm) requiring explicit physical action confirmation.
-9. **Phase 9: Complete Gesture Studio Integration** — Enable recording real live hand landmarks from UI with normalized multi-example templates.
-10. **Phase 10: Complete Gesture Conflict Detection** — Compare new custom gesture landmarks against system & profile gestures to prevent overlapping triggers.
-11. **Phase 11: Complete Application-Specific Profiles** — Allow app-specific profiles (Chrome, VS Code, PowerPoint, Media) with JSON schema validation.
-12. **Phase 12: Complete Virtual Keyboard & Air-Tap** — Connect virtual keyboard overlay to active state with debounced Z-axis air-tap key injection.
-13. **Phase 13: Connect Dashboard to Real Telemetry** — Ensure all UI counters, charts, and toggles display real live metrics.
-14. **Phase 14: Fix Settings & Configuration Persistence** — Move configuration storage to `%APPDATA%\AirOS\`.
-15. **Phase 15: Implement Production Python Engine Packaging** — Build standalone `AirOSEngine.exe` via PyInstaller bundling Python runtime, OpenCV, NumPy, MediaPipe model, and DLLs.
-16. **Phase 16: Implement Production Electron Packaging** — Configure `electron-builder` to bundle `AirOSEngine.exe` into a single standalone installer (`AirOS_Setup.exe`).
-17. **Phase 17: Installation & Execution Verification** — Test installation, startup diagnostics, and clean running on Windows without developer tools.
-18. **Phase 18: Benchmarking** — Execute benchmark suite to measure actual Camera FPS, Inference FPS, Control FPS, and Latency percentiles.
-19. **Phase 19: Long-Run Stress Test** — 30-minute continuous execution test monitoring memory, CPU, GPU, thread count, and dropped frames.
-20. **Phase 20: Final QA & Verification** — Complete 60-point acceptance criteria checklist.
-21. **Phase 21: Documentation & Final Validation Report** — Generate `docs/final-validation-report.md` with empirical measurements.
+1. Pipeline isolation: UI is never in the real-time path. Engine runs independently.
+2. Latest-frame camera: grab/retrieve in separate thread, stores only newest frame.
+3. Async MediaPipe: LIVE_STREAM mode — inference never blocks the main loop.
+4. Thread-safe IPC: WebSocket on asyncio event loop; telemetry pushed via run_coroutine_threadsafe.
+5. One Euro Filter: Correct adaptive filter reducing jitter at low speed.
+6. Multi-confirmation gestures: No gesture fires from a single frame.
+7. Controlled action registry: No arbitrary shell execution from custom gestures.
+8. Safety mechanisms: Open palm PAUSED, Ctrl+Alt+A hotkey, engine.stop() all present.
+
+---
+
+## 5. Test Results (Run: 2026-08-11)
+
+```
+tests/unit/test_core.py           22 tests   21 pass  1 FAIL
+tests/unit/test_gesture_studio.py 15 tests   15 pass  0 fail
+tests/unit/test_profiles.py       13 tests   13 pass  0 fail
+tests/unit/test_subsystems.py     30 tests   30 pass  0 fail
+                            TOTAL: 80 tests   79 pass  1 FAIL
+
+FAILED: tests/unit/test_core.py::TestStateMachine::test_pinch_during_pointer_enters_drag
+REASON: State machine never enters DRAG when has_index_pointer=False + is_pinched=True
+```
+
+---
+
+## 6. Performance Assessment
+
+> ALL values below are TARGET values or ESTIMATES. No benchmarks have been executed.
+
+| Metric | Status |
+|--------|--------|
+| Camera FPS | NOT MEASURED |
+| Tracking FPS | NOT MEASURED |
+| End-to-end latency | NOT MEASURED |
+| P50 latency | NOT MEASURED |
+| P95 latency | NOT MEASURED |
+| CPU usage | NOT MEASURED |
+| GPU usage | NOT MEASURED |
+| RAM usage | NOT MEASURED |
+| Dropped frames | NOT MEASURED |
+
+---
+
+## 7. Security
+
+| Risk | Severity | Status |
+|------|----------|--------|
+| WebSocket server: no session auth token | MEDIUM | Not fixed |
+| Any localhost process can send control commands | MEDIUM | Not fixed |
+| Custom gestures: controlled registry, no shell commands | SAFE | Confirmed |
+| User data written to source directory | HIGH | BUG-008 |
+| No outbound network for core functionality | SAFE | Confirmed |
+| No webcam frames uploaded | SAFE | Confirmed |
+
+---
+
+## 8. Dependency Inventory
+
+### Python (Python 3.11.15 in venv)
+- mediapipe 0.10.14: INSTALLED
+- opencv-python 4.11.0: INSTALLED (newer than 4.10.0.84 required, OK)
+- numpy 1.26.4: INSTALLED
+- websockets 12.0: INSTALLED
+- psutil 6.0.0: INSTALLED
+- pywin32 306: INSTALLED
+- pynput 1.7.7: INSTALLED
+- PyInstaller: NOT INSTALLED (required for packaging)
+
+### Node.js (v26.7.0)
+- electron@33: INSTALLED
+- react@18: INSTALLED
+- vite@5: INSTALLED
+- electron-builder@25: INSTALLED
+- typescript@5: INSTALLED
+
+### Missing Assets
+- assets/models/hand_landmarker.task: NOT PRESENT (downloads on first run, risky for offline)
+
+---
+
+## 9. Recommended Fix Order
+
+1. BUG-005: Fix state machine drag entry → get 80/80 tests passing
+2. BUG-001: Add result deduplication → fix velocity calculation
+3. BUG-004: Remove time.sleep from calibration → non-blocking loop
+4. BUG-002 + BUG-003: Fix cursor sensitivity and multi-monitor origin
+5. BUG-008: Move config to %APPDATA%\AirOS\
+6. Add per-stage latency instrumentation (P50/P95/P99)
+7. Remove hardcoded 30 FPS cap — let engine run at max stable rate
+8. BUG-007: Build Vite frontend (`npm run build`)
+9. Install PyInstaller, create engine.spec, build AirOSEngine.exe
+10. BUG-006: Update Electron to launch AirOSEngine.exe
+11. Configure electron-builder extraResources
+12. Add IPC session token
+13. Implement conflict detection
+14. Implement gesture validation workflow
+15. Run benchmarks and stress tests
+
+---
+
+## 10. Acceptance Criteria (Current State: 16/40)
+
+- [x] Python venv installs
+- [ ] Frontend builds (Vite build not run)
+- [ ] Engine builds as standalone exe
+- [ ] Electron builds for production
+- [ ] Windows package (installer) builds
+- [ ] Installer tested on fresh machine
+- [ ] Installed application launches
+- [ ] Python NOT required on target machine
+- [ ] Node.js NOT required on target machine
+- [x] Camera detection code exists
+- [x] Hand tracking code exists
+- [~] Cursor works (sensitivity broken)
+- [~] Click works (1 test failing)
+- [~] Drag works (1 test failing)
+- [x] Scroll works
+- [x] Swipe works
+- [x] Pause works
+- [x] Emergency keyboard shortcut exists (Ctrl+Alt+A)
+- [~] Calibration works (sleep bug)
+- [~] Gesture Studio works (single example, no validation)
+- [~] Custom gestures recordable (core works, no validated UI flow)
+- [ ] Custom gesture validation (10-example flow missing)
+- [ ] Conflict detection works
+- [~] Profiles work (code exists)
+- [ ] Import/export works
+- [ ] App-specific gesture UI
+- [ ] Virtual keyboard overlay
+- [ ] Air tap works end-to-end
+- [x] Keyboard debounce logic exists
+- [~] Dashboard shows real telemetry (IPC works; no built frontend)
+- [ ] System tray tested
+- [~] Settings persist (wrong storage path)
+- [x] Logs work
+- [ ] 30-minute stress test
+- [ ] Memory growth measured
+- [ ] FPS degradation measured
+- [ ] No critical crashes
+- [x] No fabricated metrics (all unknowns marked NOT MEASURED)
+- [x] Safety mechanisms exist
+- [x] Works offline
+
+**Score: 16/40 criteria met.**
+
+---
+
+*Updated after Phase 1 audit. Next: Fix BUG-005 (state machine drag) to restore 80/80 tests.*
