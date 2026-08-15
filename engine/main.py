@@ -344,8 +344,8 @@ class AirOSEngine:
                 motion.velocity[0],
                 result.result_timestamp
             )
-            palm_event = self._palm.update(landmarks, result.result_timestamp)
-            two_hand_event = self._two_hand.update(result.num_hands, result.landmarks, result.result_timestamp)
+            palm_event = self._palm.update(landmarks, motion.speed, result.result_timestamp)
+            two_hand_event = self._two_hand.update(result.num_hands, result.result_timestamp)
 
             # Evaluate system gesture candidate
             system_gesture_event: Optional[GestureEvent] = (
