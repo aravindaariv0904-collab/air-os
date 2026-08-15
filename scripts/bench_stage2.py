@@ -43,7 +43,7 @@ if not ok:
 
 # Wait for first frame
 for _ in range(50):
-    f, _ = camera.get_frame()
+    f, _, _ = camera.get_frame()
     if f is not None:
         break
     time.sleep(0.05)
@@ -58,7 +58,7 @@ test_start = time.monotonic()
 frames_processed = 0
 
 while time.monotonic() - test_start < 10.0:
-    frame, _ = camera.get_frame()
+    frame, _, _ = camera.get_frame()
     if frame is None:
         time.sleep(0.001)
         continue
