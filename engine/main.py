@@ -359,7 +359,7 @@ class AirOSEngine:
             # Evaluate custom gesture candidate
             custom_gesture_id: Optional[str] = None
             if system_gesture_event is None and not self._pinch.is_pinched:
-                custom_gesture_id = self._studio.match(landmarks)
+                custom_gesture_id = self._studio.match(landmarks, result.result_timestamp)
 
             # Arbitrate
             has_index_ptr = is_index_only(landmarks)
