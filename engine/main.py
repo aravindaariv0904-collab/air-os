@@ -337,8 +337,13 @@ class AirOSEngine:
 
             # 6. Gesture detection
             pinch_event = self._pinch.update(landmarks, result.result_timestamp)
-            scroll_event = self._scroll.update(motion.dy, result.result_timestamp)
-            swipe_event = self._swipe.update(motion.dx, motion.dy, result.result_timestamp)
+            scroll_event = self._scroll.update(motion.velocity[1], result.result_timestamp)
+            swipe_event = self._swipe.update(
+                motion.displacement_short[0],
+                motion.displacement_short[1],
+                motion.velocity[0],
+                result.result_timestamp
+            )
             palm_event = self._palm.update(landmarks, result.result_timestamp)
             two_hand_event = self._two_hand.update(result.num_hands, result.landmarks, result.result_timestamp)
 
