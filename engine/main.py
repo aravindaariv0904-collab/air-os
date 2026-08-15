@@ -34,7 +34,7 @@ from engine.landmarks.geometry import (
 from engine.motion.estimator import MotionEstimator
 from engine.filtering.one_euro import OneEuroFilter2D
 from engine.gestures.recognizer import (
-    PinchDetector, ScrollDetector, SwipeDetector,
+    PinchDetector, PinchState, ScrollDetector, SwipeDetector,
     OpenPalmDetector, TwoHandDetector, GestureEvent,
 )
 from engine.state.machine import StateMachine
@@ -336,7 +336,11 @@ class AirOSEngine:
             motion = self._motion.update(wrist[0], wrist[1], result.result_timestamp)
 
             # 6. Gesture detection
-            pinch_event = self._pinch.update(landmarks, result.result_timestamp)
+            pinch_state = self._pinch.update(landmarks, result.result_timestamp)
+            pinch_event = (
+                GestureEvent(gesture=GestureType.PINCH, confidence=self._pinch.get_confidence(), timestamp=result.result_timestamp)
+                if pinch_state == PinchState.PINCHED else None
+            )
             scroll_event = self._scroll.update(motion.velocity[1], result.result_timestamp)
             swipe_event = self._swipe.update(
                 motion.displacement_short[0],
