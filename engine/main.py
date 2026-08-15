@@ -332,7 +332,8 @@ class AirOSEngine:
             ts_stage.landmark_ts = time.monotonic()
 
             # 5. Motion estimation
-            motion = self._motion.update(landmarks, result.result_timestamp)
+            wrist = wrist_position(landmarks)
+            motion = self._motion.update(wrist[0], wrist[1], result.result_timestamp)
 
             # 6. Gesture detection
             pinch_event = self._pinch.update(landmarks, result.result_timestamp)
