@@ -1,23 +1,33 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { useEngine } from '../../hooks/useEngine'
 import './Calibration.css'
 
 export default function Calibration() {
   const { telemetry, calibrate } = useEngine()
-  const [activeStep, setActiveStep] = useState(1)
+
+  const calibStatus = telemetry.calibration || {}
+  const isCalibrating = calibStatus.step_name && calibStatus.step_name !== 'IDLE' && calibStatus.step_name !== 'COMPLETE'
+  const stepName = calibStatus.step_name || 'IDLE'
+  const isCalibrated = calibStatus.calibrated || false
 
   const steps = [
-    { step: 1, title: 'Camera Check', desc: 'Verify camera feed and resolution', icon: '📷' },
-    { step: 2, title: 'Hand Positioning', desc: 'Sit at comfortable distance (50-80cm)', icon: '🧍' },
-    { step: 3, title: 'Hand Detection', desc: 'Raise primary hand in front of camera', icon: '✋' },
-    { step: 4, title: 'Interaction Bounds', desc: 'Move hand to extreme corners of your range', icon: '📐' },
-    { step: 5, title: 'Pinch Calibration', desc: 'Pinch index and thumb 3 times', icon: '🤏' },
-    { step: 6, title: 'Complete', desc: 'Profile saved to %APPDATA%/AirOS', icon: '✅' },
+    { name: 'CHECK_CAMERA', title: 'Camera Check', desc: 'Verify camera feed and resolution' },
+    { name: 'POSITION', title: 'Hand Positioning', desc: 'Sit at comfortable distance (50-80cm)' },
+    { name: 'DETECT_HAND', title: 'Hand Detection', desc: 'Raise primary hand in front of camera' },
+    { name: 'SWEEP_BOUNDS', title: 'Interaction Bounds', desc: 'Move hand to extreme corners of your range' },
+    { name: 'PINCH_SAMPLES', title: 'Pinch Calibration', desc: 'Pinch index and thumb 3 times' },
+    { name: 'COMPLETE', title: 'Complete', desc: 'Profile saved to %APPDATA%/AirOS' },
   ]
+
+  const getCurrentStepIndex = () => {
+    const idx = steps.findIndex(s => s.name === stepName)
+    return idx >= 0 ? idx + 1 : (isCalibrated ? 6 : 1)
+  }
+
+  const activeStepIdx = getCurrentStepIndex()
 
   const handleStartGuided = () => {
     calibrate()
-    setActiveStep(2)
   }
 
   return (
@@ -33,13 +43,14 @@ export default function Calibration() {
         {/* Step Progress Tracker */}
         <div className="calib-sidebar">
           <div className="steps-tracker">
-            {steps.map(s => {
-              const isCompleted = s.step < activeStep
-              const isCurrent = s.step === activeStep
+            {steps.map((s, i) => {
+              const stepNum = i + 1
+              const isCompleted = stepNum < activeStepIdx
+              const isCurrent = stepNum === activeStepIdx
               return (
-                <div key={s.step} className={`step-item ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''}`}>
+                <div key={s.name} className={`step-item ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''}`}>
                   <div className="step-icon-box">
-                    {isCompleted ? '✓' : s.step}
+                    {isCompleted ? '✓' : stepNum}
                   </div>
                   <div className="step-details">
                     <div className="step-title">{s.title}</div>
@@ -55,8 +66,8 @@ export default function Calibration() {
         <div className="calib-main">
           <div className="calib-card">
             <div className="calib-header">
-              <span className="step-badge">Step {activeStep} of {steps.length}</span>
-              <h3>{steps[activeStep - 1].title}</h3>
+              <span className="step-badge">Backend Step: {stepName}</span>
+              <h3>{steps[activeStepIdx - 1]?.title || 'Guided Calibration'}</h3>
             </div>
 
             <div className="calib-visual-stage">
@@ -67,7 +78,9 @@ export default function Calibration() {
                   <span className="corner bottom-left" />
                   <span className="corner bottom-right" />
                   <div className="region-info">
-                    <span>Region: {((telemetry as any)?.calibration?.region_right - (telemetry as any)?.calibration?.region_left || 0.8).toFixed(2)}x</span>
+                    <span>
+                      Region: {((calibStatus.region_right || 0.9) - (calibStatus.region_left || 0.1)).toFixed(2)}x
+                    </span>
                   </div>
                 </div>
                 <div className="hand-tracker-point" style={{ left: '50%', top: '45%' }}>
@@ -78,23 +91,9 @@ export default function Calibration() {
             </div>
 
             <div className="calib-actions">
-              {activeStep > 1 && (
-                <button className="btn btn-ghost" onClick={() => setActiveStep(prev => Math.max(1, prev - 1))}>
-                  ← Back
-                </button>
-              )}
-              {activeStep < steps.length ? (
-                <button className="btn btn-primary" onClick={() => {
-                  if (activeStep === 1) handleStartGuided()
-                  else setActiveStep(prev => prev + 1)
-                }}>
-                  {activeStep === 1 ? 'Start Guided Calibration' : 'Next Step →'}
-                </button>
-              ) : (
-                <button className="btn btn-primary" onClick={() => setActiveStep(1)}>
-                  Finish & Save Profile
-                </button>
-              )}
+              <button className="btn btn-primary" onClick={handleStartGuided}>
+                {isCalibrating ? '⊕ Restart Backend Calibration' : '⊕ Start Backend Calibration'}
+              </button>
             </div>
           </div>
         </div>

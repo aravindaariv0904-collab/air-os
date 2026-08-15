@@ -13,10 +13,12 @@ export interface Telemetry {
   enabled: boolean
   profile?: string
   foreground_app?: string
+  keyboard_state?: any
+  calibration?: any
 }
 
 export interface EngineStatus {
-  state: 'stopped' | 'starting' | 'running' | 'paused' | 'error'
+  state: 'stopped' | 'starting' | 'ready' | 'running' | 'paused' | 'error'
   connected: boolean
   error?: string
 }
@@ -49,9 +51,10 @@ export function useEngine() {
     connected: false,
   })
   const [profiles, setProfiles] = useState<GestureProfile[]>([])
-  const wsRef = useState<WebSocket | null>(null)
+  const [templates, setTemplates] = useState<any[]>([])
+  const [settings, setSettings] = useState<any>(null)
 
-  // Direct WebSocket connection for Web Browser mode
+  // Direct WebSocket connection for Web Browser mode or Electron mode
   useEffect(() => {
     if (window.airos) {
       // Electron mode
@@ -90,26 +93,37 @@ export function useEngine() {
 
       const connectWS = () => {
         try {
-          socket = new WebSocket('ws://localhost:7890')
+          socket = new WebSocket('ws://127.0.0.1:7890')
 
           socket.onopen = () => {
             setStatus({ state: 'running', connected: true })
             socket?.send(JSON.stringify({ type: 'control', command: 'profile_list' }))
+            socket?.send(JSON.stringify({ type: 'control', command: 'gesture_list' }))
+            socket?.send(JSON.stringify({ type: 'control', command: 'settings_get' }))
           }
 
           socket.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data)
+              const payload = data.payload || data
               if (data.type === 'telemetry') {
-                setTelemetry(data)
-                if (data.state) {
+                setTelemetry(payload)
+                if (payload.state) {
                   setStatus(prev => ({
                     ...prev,
-                    state: data.state.toLowerCase() === 'paused' ? 'paused' : 'running'
+                    state: payload.state.toLowerCase() === 'paused' ? 'paused' : 'running'
                   }))
                 }
               } else if (data.type === 'profile_list') {
-                if (data.profiles) setProfiles(data.profiles)
+                if (payload.profiles) setProfiles(payload.profiles)
+              } else if (data.type === 'gesture_list') {
+                if (payload.templates) setTemplates(payload.templates)
+              } else if (data.type === 'settings_data') {
+                if (payload.settings) setSettings(payload.settings)
+              } else if (data.type === 'engine_state') {
+                if (payload.state) {
+                  setStatus(prev => ({ ...prev, state: payload.state.toLowerCase() as EngineStatus['state'] }))
+                }
               }
             } catch (e) {
               console.error('IPC parse error:', e)
@@ -148,10 +162,10 @@ export function useEngine() {
       else if (command === 'profile_set') window.airos.profileSet(extraData.id)
     } else {
       try {
-        const ws = new WebSocket('ws://localhost:7890')
+        const ws = new WebSocket('ws://127.0.0.1:7890')
         ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'control', command, ...extraData }))
-          setTimeout(() => ws.close(), 500)
+          ws.send(JSON.stringify({ type: 'control', command, payload: { command, ...extraData } }))
+          setTimeout(() => ws.close(), 300)
         }
       } catch (e) {
         console.error('Failed to send command over WS:', e)
@@ -165,11 +179,30 @@ export function useEngine() {
   const resume = useCallback(() => sendCommand('resume'), [sendCommand])
   const calibrate = useCallback(() => sendCommand('calibrate'), [sendCommand])
   const setProfile = useCallback((id: string) => sendCommand('profile_set', { id }), [sendCommand])
+  const updateSettings = useCallback((newSettings: any) => sendCommand('settings_update', { settings: newSettings }), [sendCommand])
+  const recordGestureStart = useCallback(() => sendCommand('gesture_start_recording'), [sendCommand])
+  const recordGestureFinish = useCallback((name: string) => sendCommand('gesture_finish_recording', { name }), [sendCommand])
+  const deleteGesture = useCallback((id: string) => sendCommand('gesture_delete', { id }), [sendCommand])
 
-  return { telemetry, status, profiles, start, stop, pause, resume, calibrate, setProfile }
+  return {
+    telemetry,
+    status,
+    profiles,
+    templates,
+    settings,
+    start,
+    stop,
+    pause,
+    resume,
+    calibrate,
+    setProfile,
+    updateSettings,
+    recordGestureStart,
+    recordGestureFinish,
+    deleteGesture,
+  }
 }
 
-// Type declarations for window.airos
 declare global {
   interface Window {
     airos?: {

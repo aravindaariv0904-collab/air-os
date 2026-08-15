@@ -1,0 +1,106 @@
+.keyboard-overlay-backdrop {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 960px;
+  background: rgba(13, 16, 23, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--accent-blue);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  z-index: 9999;
+}
+
+.keyboard-overlay-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.keyboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+}
+
+.keyboard-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-blue);
+}
+
+.typed-preview-box {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-family: monospace;
+  font-size: 16px;
+  color: #fff;
+  min-width: 280px;
+  display: flex;
+  align-items: center;
+}
+
+.cursor-blink {
+  animation: blink 1s infinite;
+  color: var(--accent-blue);
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.keyboard-canvas {
+  position: relative;
+  height: 220px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.key-cap {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-main);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.key-cap.hovered {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: #fff;
+  box-shadow: 0 0 16px rgba(99, 179, 237, 0.6);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.key-cap.shift-active {
+  background: var(--accent-purple);
+  color: #fff;
+}
+
+.keyboard-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}

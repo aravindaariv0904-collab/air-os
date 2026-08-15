@@ -1,22 +1,88 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useEngine } from '../../hooks/useEngine'
 import './Settings.css'
 
 export default function Settings() {
-  const [sensitivity, setSensitivity] = useState(1.0)
-  const [smoothing, setSmoothing] = useState(1.2)
-  const [deadZone, setDeadZone] = useState(0.008)
-  const [scrollSpeed, setScrollSpeed] = useState(3)
-  const [pinchThreshold, setPinchThreshold] = useState(0.30)
-  const [startMinimized, setStartMinimized] = useState(false)
-  const [startOnBoot, setStartOnBoot] = useState(true)
-  const [debugOverlay, setDebugOverlay] = useState(false)
+  const { settings, updateSettings } = useEngine()
+
+  const cursor = settings?.cursor || {}
+  const gestures = settings?.gestures || {}
+  const system = settings?.system || {}
+
+  const [sensitivity, setSensitivity] = useState(cursor.sensitivity || 1.0)
+  const [smoothing, setSmoothing] = useState(cursor.smoothing_min_cutoff || 1.2)
+  const [deadZone, setDeadZone] = useState(cursor.dead_zone || 0.008)
+  const [scrollSpeed, setScrollSpeed] = useState(gestures.scroll_speed || 3)
+  const [pinchThreshold, setPinchThreshold] = useState(gestures.pinch_threshold || 0.30)
+  const [startMinimized, setStartMinimized] = useState(system.start_minimized || false)
+  const [startOnBoot, setStartOnBoot] = useState(system.start_engine_on_launch || true)
+  const [debugOverlay, setDebugOverlay] = useState(system.debug_logging || false)
+
+  useEffect(() => {
+    if (settings) {
+      if (settings.cursor) {
+        setSensitivity(settings.cursor.sensitivity || 1.0)
+        setSmoothing(settings.cursor.smoothing_min_cutoff || 1.2)
+        setDeadZone(settings.cursor.dead_zone || 0.008)
+      }
+      if (settings.gestures) {
+        setScrollSpeed(settings.gestures.scroll_speed || 3)
+        setPinchThreshold(settings.gestures.pinch_threshold || 0.30)
+      }
+      if (settings.system) {
+        setStartMinimized(settings.system.start_minimized || false)
+        setStartOnBoot(settings.system.start_engine_on_launch || true)
+        setDebugOverlay(settings.system.debug_logging || false)
+      }
+    }
+  }, [settings])
+
+  const handleSensitivityChange = (val: number) => {
+    setSensitivity(val)
+    updateSettings({ cursor: { sensitivity: val } })
+  }
+
+  const handleSmoothingChange = (val: number) => {
+    setSmoothing(val)
+    updateSettings({ cursor: { smoothing_min_cutoff: val } })
+  }
+
+  const handleDeadZoneChange = (val: number) => {
+    setDeadZone(val)
+    updateSettings({ cursor: { dead_zone: val } })
+  }
+
+  const handleScrollSpeedChange = (val: number) => {
+    setScrollSpeed(val)
+    updateSettings({ gestures: { scroll_speed: val } })
+  }
+
+  const handlePinchThresholdChange = (val: number) => {
+    setPinchThreshold(val)
+    updateSettings({ gestures: { pinch_threshold: val } })
+  }
+
+  const handleStartMinimizedToggle = (val: boolean) => {
+    setStartMinimized(val)
+    updateSettings({ system: { start_minimized: val } })
+  }
+
+  const handleStartOnBootToggle = (val: boolean) => {
+    setStartOnBoot(val)
+    updateSettings({ system: { start_engine_on_launch: val } })
+  }
+
+  const handleDebugToggle = (val: boolean) => {
+    setDebugOverlay(val)
+    updateSettings({ system: { debug_logging: val } })
+  }
 
   return (
     <div className="settings-page fade-in">
       <div className="page-header">
         <div>
           <h2 className="page-title">Settings & Preferences</h2>
-          <p className="page-desc">Fine-tune motion dynamics, input filters, and system startup behavior</p>
+          <p className="page-desc">Fine-tune motion dynamics, input filters, and system persistence</p>
         </div>
       </div>
 
@@ -29,7 +95,7 @@ export default function Settings() {
             desc="Cursor speed gain relative to hand motion center"
             min={0.5} max={2.5} step={0.1}
             value={sensitivity}
-            onChange={setSensitivity}
+            onChange={handleSensitivityChange}
           />
           <SettingSlider
             id="setting-smoothing"
@@ -37,7 +103,7 @@ export default function Settings() {
             desc="Lower cutoff = smoother low-speed tracking; higher = less lag"
             min={0.5} max={3.0} step={0.1}
             value={smoothing}
-            onChange={setSmoothing}
+            onChange={handleSmoothingChange}
           />
           <SettingSlider
             id="setting-dead-zone"
@@ -45,7 +111,7 @@ export default function Settings() {
             desc="Suppress micro-tremor when hand is still"
             min={0.0} max={0.02} step={0.001}
             value={deadZone}
-            onChange={setDeadZone}
+            onChange={handleDeadZoneChange}
           />
         </div>
 
@@ -57,7 +123,7 @@ export default function Settings() {
             desc="Lines per scroll notch gesture update"
             min={1} max={10} step={1}
             value={scrollSpeed}
-            onChange={setScrollSpeed}
+            onChange={handleScrollSpeedChange}
           />
           <SettingSlider
             id="setting-pinch-threshold"
@@ -65,7 +131,7 @@ export default function Settings() {
             desc="Normalized index-to-thumb tip pinch trigger distance"
             min={0.15} max={0.45} step={0.01}
             value={pinchThreshold}
-            onChange={setPinchThreshold}
+            onChange={handlePinchThresholdChange}
           />
         </div>
 
@@ -75,19 +141,19 @@ export default function Settings() {
             id="setting-start-minimized"
             label="Start minimized to Windows System Tray"
             value={startMinimized}
-            onChange={setStartMinimized}
+            onChange={handleStartMinimizedToggle}
           />
           <SettingToggle
             id="setting-start-boot"
             label="Launch AirOS engine automatically at startup"
             value={startOnBoot}
-            onChange={setStartOnBoot}
+            onChange={handleStartOnBootToggle}
           />
           <SettingToggle
             id="setting-debug"
             label="Enable real-time latency & tracking debug logs"
             value={debugOverlay}
-            onChange={setDebugOverlay}
+            onChange={handleDebugToggle}
           />
         </div>
       </div>

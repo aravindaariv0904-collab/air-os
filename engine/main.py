@@ -9,19 +9,21 @@ Pipeline (per frame):
   4. Process landmarks (geometry)
   5. Update motion estimator
   6. Detect gestures
-  7. Run state machine
-  8. Execute actions via WindowsInputAdapter
+  7. Run state machine & arbitration
+  8. Execute actions via WindowsInputAdapter & InputSafetyManager
   9. Update telemetry (non-blocking, separate thread)
-
-The dashboard is NOT in this loop. Telemetry is pushed separately.
 """
 
 import time
 import logging
 import threading
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
+
+from config.config_manager import get_config_manager, AppConfigModel
+from input.safety_manager import get_safety_manager, InputSafetyManager
+from engine.lifecycle import get_lifecycle_manager, EngineLifecycleManager, EngineState
 
 from engine.camera.capture import CameraCapture, CameraConfig
 from engine.tracking.hand_tracker import HandTracker, TrackerConfig
@@ -115,32 +117,29 @@ class Telemetry:
 class AirOSEngine:
     """
     Main AirOS real-time engine.
-    
-    Usage:
-        engine = AirOSEngine()
-        engine.start()
-        # ... runs until stop() is called
-        engine.stop()
     """
 
-    TARGET_LOOP_FPS = 30
-    TARGET_LOOP_INTERVAL = 1.0 / TARGET_LOOP_FPS
-
     def __init__(self, telemetry_callback=None):
-        """
-        Args:
-            telemetry_callback: Optional callable(Telemetry) — called every 100ms
-                                 from a separate thread. Non-blocking for main loop.
-        """
         self._telemetry_callback = telemetry_callback
         self._running = False
         self._enabled = True  # False = PAUSED or OFF
 
+        # Service singletons
+        self._config_mgr = get_config_manager()
+        self._lifecycle_mgr = get_lifecycle_manager()
+        self._input = WindowsInputAdapter()
+        self._safety_mgr = get_safety_manager(self._input)
+
+        # Apply target loop interval from config
+        sys_cfg = self._config_mgr.config.system
+        self._target_loop_fps = sys_cfg.target_loop_fps
+        self._target_loop_interval = 1.0 / self._target_loop_fps
+
         # Pipeline components
         self._camera = CameraCapture(CameraConfig(
-            camera_index=0,
-            width=640,
-            height=480,
+            camera_index=sys_cfg.camera_index,
+            width=sys_cfg.camera_width,
+            height=sys_cfg.camera_height,
             fps=30,
             use_dshow=True,
             flip_horizontal=True,
@@ -151,7 +150,7 @@ class AirOSEngine:
         ))
         self._motion = MotionEstimator(history_size=90)
         self._cursor = CursorEngine(CursorConfig())
-        self._input = WindowsInputAdapter()
+        self._apply_cursor_config()
 
         # Gesture detectors
         self._pinch = PinchDetector()
@@ -166,7 +165,7 @@ class AirOSEngine:
 
         # Calibration
         self._calibration = CalibrationManager()
-        self._calibration.load()  # Load saved profile if present
+        self._calibration.load()
         self._apply_calibration_profile()
         self._calibration_active = False
 
@@ -202,7 +201,7 @@ class AirOSEngine:
         # Safety: track last gesture event for telemetry
         self._last_gesture_event: Optional[GestureEvent] = None
 
-        # Timestamp counter for MediaPipe (must be monotonically increasing)
+        # Timestamp counter for MediaPipe
         self._mp_timestamp_ms = 0
 
         # psutil for system metrics
@@ -217,6 +216,7 @@ class AirOSEngine:
     def start(self) -> bool:
         """Initialize and start the engine. Returns True on success."""
         logger.info("=== AirOS Engine Starting ===")
+        self._lifecycle_mgr.transition_to(EngineState.STARTING)
 
         # Initialize cursor engine (detects screen size)
         self._cursor.initialize()
@@ -224,17 +224,21 @@ class AirOSEngine:
         # Initialize tracker
         if not self._tracker.initialize():
             logger.error("HandTracker initialization failed")
+            self._lifecycle_mgr.transition_to(EngineState.ERROR, "HandTracker initialization failed")
             return False
 
         # Start camera
         if not self._camera.start():
             logger.error("Camera start failed")
+            self._lifecycle_mgr.transition_to(EngineState.ERROR, "Camera start failed")
             return False
 
         camera_info = self._camera.get_camera_info()
         logger.info(f"Camera: {camera_info}")
 
         self._running = True
+        self._lifecycle_mgr.transition_to(EngineState.READY)
+        self._lifecycle_mgr.transition_to(EngineState.RUNNING)
         self._main_loop()
         return True
 
@@ -254,7 +258,7 @@ class AirOSEngine:
                 self.stop()
                 break
 
-            # ── 1. Get latest frame ──────────────────────────────────
+            # 1. Get latest frame
             frame, frame_ts, frame_id = self._camera.get_frame()
             if frame is None:
                 time.sleep(0.001)
@@ -263,8 +267,8 @@ class AirOSEngine:
 
             ts_stage = StageTimestamps(frame_id=frame_id, capture_ts=frame_ts)
 
-            # ── 2. Submit to MediaPipe (non-blocking async) ──────────
-            self._mp_timestamp_ms += 1  # Must increase monotonically
+            # 2. Submit to MediaPipe (non-blocking async)
+            self._mp_timestamp_ms += 1
             ts_stage.submit_ts = time.monotonic()
             self._tracker.process_frame(
                 frame,
@@ -273,7 +277,7 @@ class AirOSEngine:
                 capture_timestamp=frame_ts,
             )
 
-            # ── 3. Get latest tracking result ────────────────────────
+            # 3. Get latest tracking result
             t_gesture_start = time.monotonic()
             result = self._tracker.get_latest_result()
 
@@ -285,9 +289,8 @@ class AirOSEngine:
                 self._sleep_to_target(loop_start)
                 continue
 
-            # Check if this result has already been processed in a previous loop iteration
+            # Check if this result has already been processed
             if result.result_timestamp <= last_result_timestamp or (result.frame_id > 0 and result.frame_id == last_frame_id):
-                # Duplicate result — do not re-process motion or gestures
                 self._sleep_to_target(loop_start)
                 continue
 
@@ -296,7 +299,6 @@ class AirOSEngine:
             ts_stage.tracking_result_ts = result.result_timestamp
 
             if result.num_hands == 0:
-                # No hands detected in fresh frame — reset detectors and motion
                 self._handle_no_hands()
                 self._current_gesture = GestureType.NONE
                 self._current_confidence = 0.0
@@ -304,10 +306,10 @@ class AirOSEngine:
                 self._sleep_to_target(loop_start)
                 continue
 
-            # ── 4. Process landmarks ─────────────────────────────────
-            landmarks = result.landmarks[0]  # Primary hand
+            # 4. Process landmarks
+            landmarks = result.landmarks[0]
 
-            # ── 4b. Calibration workflow ─────────────────────────────
+            # 4b. Calibration workflow
             if self._calibration_active:
                 wrist = wrist_position(landmarks)
                 pdist = normalized_pinch_distance(landmarks)
@@ -323,80 +325,56 @@ class AirOSEngine:
                 self._sleep_to_target(loop_start)
                 continue
 
-            # ── 5. Update motion estimator ───────────────────────────
-            wrist_pos = wrist_position(landmarks)
-            motion = self._motion.update(wrist_pos[0], wrist_pos[1], time.monotonic())
+            # 4c. Custom gesture studio recording
+            if self._studio.is_recording:
+                self._studio.add_frame(landmarks)
+
             ts_stage.landmark_ts = time.monotonic()
 
-            # ── 4c. App profile auto-switch (rate-limited ~1 Hz) ─────
-            self._profile_manager.update(time.monotonic())
+            # 5. Motion estimation
+            motion = self._motion.update(landmarks, result.result_timestamp)
 
-            # ── 6. Detect gestures ───────────────────────────────────
-            ts = time.monotonic()
-            
-            # Index pointer
+            # 6. Gesture detection
+            pinch_event = self._pinch.update(landmarks, result.result_timestamp)
+            scroll_event = self._scroll.update(motion.dy, result.result_timestamp)
+            swipe_event = self._swipe.update(motion.dx, motion.dy, result.result_timestamp)
+            palm_event = self._palm.update(landmarks, result.result_timestamp)
+            two_hand_event = self._two_hand.update(result.num_hands, result.landmarks, result.result_timestamp)
+
+            # Evaluate system gesture candidate
+            system_gesture_event: Optional[GestureEvent] = (
+                palm_event or two_hand_event or pinch_event or scroll_event or swipe_event
+            )
+
+            # Evaluate custom gesture candidate
+            custom_gesture_id: Optional[str] = None
+            if system_gesture_event is None and not self._pinch.is_pinched:
+                custom_gesture_id = self._studio.match(landmarks)
+
+            # Arbitrate
             has_index_ptr = is_index_only(landmarks)
-            
-            # Pinch
-            pinch_state_change = self._pinch.update(landmarks, ts)
             is_pinched = self._pinch.is_pinched
             is_approaching = self._pinch.is_approaching
 
-            # If pinched, don't detect scroll or swipe
-            gesture_event: Optional[GestureEvent] = None
-
-            if not is_pinched and self._state_machine.state != InteractionState.DRAG:
-                # Scroll
-                scroll_event = self._scroll.update(motion.velocity[1], ts)
-                if scroll_event:
-                    gesture_event = scroll_event
-
-                # Swipe (only if not scrolling)
-                if gesture_event is None:
-                    swipe_event = self._swipe.update(
-                        motion.displacement_medium[0],
-                        motion.displacement_medium[1],
-                        motion.velocity[0],
-                        ts,
-                    )
-                    if swipe_event:
-                        gesture_event = swipe_event
-
-            # Open palm (PAUSE) — always check
-            palm_event = self._palm.update(landmarks, motion.speed, ts)
-            if palm_event:
-                gesture_event = palm_event
-
-            # Two hands
-            two_hand_event = self._two_hand.update(result.num_hands, ts)
-            if two_hand_event:
-                gesture_event = two_hand_event
-
-            # ── 6b. Custom gestures (Gesture Studio) ─────────────────
-            custom_id = None
-            if self._enabled and not is_pinched:
-                custom_id = self._studio.match(landmarks, ts)
-
-            # Central Arbitration
-            gesture_event, custom_id = self._arbitrator.arbitrate(
-                system_event=gesture_event,
-                custom_gesture_id=custom_id,
+            gesture_event, matched_custom_id = self._arbitrator.arbitrate(
+                system_event=system_gesture_event,
+                custom_gesture_id=custom_gesture_id,
                 is_pinched=is_pinched,
                 is_paused=not self._enabled,
                 is_calibrating=self._calibration_active,
                 is_keyboard=self._state_machine.state == InteractionState.KEYBOARD,
             )
 
-            if custom_id:
-                self._execute_custom_gesture(custom_id)
+            if matched_custom_id:
+                self._execute_custom_gesture(matched_custom_id)
 
-            # Determine current gesture type for state machine
+            current_gesture = GestureType.NONE
             if gesture_event:
                 current_gesture = gesture_event.gesture
                 self._current_confidence = gesture_event.confidence
             elif is_pinched:
                 current_gesture = GestureType.PINCH
-                self._current_confidence = self._pinch.get_confidence()
+                self._current_confidence = 0.95
             elif has_index_ptr:
                 current_gesture = GestureType.INDEX_POINTER
                 self._current_confidence = 0.85
@@ -408,7 +386,7 @@ class AirOSEngine:
             ts_stage.gesture_ts = time.monotonic()
             gesture_ms = (ts_stage.gesture_ts - t_gesture_start) * 1000
 
-            # ── 7. Run state machine ─────────────────────────────────
+            # 7. Run state machine
             if self._enabled:
                 actions = self._state_machine.process(
                     gesture=current_gesture,
@@ -421,7 +399,7 @@ class AirOSEngine:
                 )
                 ts_stage.state_ts = time.monotonic()
 
-                # ── 8. Execute actions ───────────────────────────────
+                # 8. Execute actions
                 if actions:
                     self._execute_actions(actions, landmarks, gesture_event)
                 ts_stage.input_ts = time.monotonic()
@@ -429,18 +407,18 @@ class AirOSEngine:
                 ts_stage.state_ts = time.monotonic()
                 ts_stage.input_ts = ts_stage.state_ts
 
-            # ── 8b. Virtual keyboard mode ────────────────────────────
+            # 8b. Virtual keyboard mode
             if self._state_machine.state == InteractionState.KEYBOARD:
-                self._run_keyboard(landmarks, ts)
+                self._run_keyboard(landmarks, result.result_timestamp)
 
             # Record full stage breakdown
             latency_breakdown = self._latency_tracker.record_frame(ts_stage)
 
-            # ── 9. Telemetry snapshot ────────────────────────────────
+            # 9. Telemetry snapshot
             total_ms = (time.monotonic() - loop_start) * 1000
             self._update_telemetry(result, gesture_ms, frame_ts, total_ms, latency_breakdown)
 
-            # ── Sleep to maintain target FPS ─────────────────────────
+            # Sleep to maintain target FPS
             self._sleep_to_target(loop_start)
 
         logger.info("Real-time pipeline stopped")
@@ -459,18 +437,20 @@ class AirOSEngine:
 
                 elif action == "mouse_down":
                     self._input.mouse_down("left")
+                    self._safety_mgr.record_mouse_down("left")
 
                 elif action == "mouse_up":
                     self._input.mouse_up("left")
+                    self._safety_mgr.record_mouse_up("left")
 
                 elif action in ("scroll_up", "gesture_type.scroll_up"):
                     intensity = gesture_event.extra.get("intensity", 0.5) if gesture_event else 0.5
-                    lines = max(1, min(5, int(intensity * 5)))
+                    lines = max(1, min(10, int(intensity * self._config_mgr.config.gestures.scroll_speed * 2)))
                     self._input.scroll_up(lines)
 
                 elif action in ("scroll_down", "gesture_type.scroll_down"):
                     intensity = gesture_event.extra.get("intensity", 0.5) if gesture_event else 0.5
-                    lines = max(1, min(5, int(intensity * 5)))
+                    lines = max(1, min(10, int(intensity * self._config_mgr.config.gestures.scroll_speed * 2)))
                     self._input.scroll_down(lines)
 
                 elif action == "navigate_back":
@@ -480,21 +460,19 @@ class AirOSEngine:
                     self._input.key_press(VK.BROWSER_FORWARD)
 
                 elif action == "pause":
-                    self._input.disable()
-                    self._enabled = False
-                    logger.info("AirOS PAUSED")
+                    self.pause()
 
                 elif action == "resume":
-                    self._input.enable()
-                    self._enabled = True
-                    logger.info("AirOS RESUMED")
+                    self.resume()
 
                 elif action == "enter_keyboard":
                     self._keyboard.activate()
+                    self._safety_mgr.set_keyboard_mode(True)
                     logger.info("Virtual keyboard activated")
 
                 elif action == "exit_keyboard":
                     self._keyboard.deactivate()
+                    self._safety_mgr.set_keyboard_mode(False)
                     logger.info("Virtual keyboard deactivated")
 
             except Exception as e:
@@ -520,10 +498,7 @@ class AirOSEngine:
             logger.error(f"Custom gesture execution error: {e}")
 
     def _run_keyboard(self, landmarks, timestamp: float):
-        """
-        Virtual keyboard interaction: maps the index fingertip to a key and
-        executes air-tap key presses. Runs only while in KEYBOARD state.
-        """
+        """Virtual keyboard interaction."""
         try:
             index_pos = index_tip_position(landmarks)
             key_action = self._keyboard.update(index_pos[0], index_pos[1], timestamp)
@@ -547,11 +522,7 @@ class AirOSEngine:
 
     def _handle_no_hands(self):
         """Clean up when tracking is lost."""
-        if self._state_machine.state == InteractionState.DRAG:
-            try:
-                self._input.mouse_up("left")
-            except Exception:
-                pass
+        self._safety_mgr.release_all_held_input(reason="tracking_loss")
         was_keyboard = self._state_machine.state == InteractionState.KEYBOARD
         self._pinch.reset()
         self._motion.reset()
@@ -564,16 +535,11 @@ class AirOSEngine:
             has_index_pointer=False,
             speed=0.0,
         )
-        # Execute cleanup actions (e.g. exit_keyboard when a hand is lost)
         if actions and was_keyboard:
             for action in actions:
                 if action == "exit_keyboard":
                     self._keyboard.deactivate()
-                elif action == "mouse_up":
-                    try:
-                        self._input.mouse_up("left")
-                    except Exception:
-                        pass
+                    self._safety_mgr.set_keyboard_mode(False)
 
     def _update_telemetry(
         self,
@@ -583,9 +549,9 @@ class AirOSEngine:
         total_ms: float = 0.0,
         latency_breakdown: Optional[LatencyBreakdown] = None,
     ):
-        """Update telemetry snapshot. Rate-limited to 10 Hz."""
+        """Update telemetry snapshot."""
         now = time.monotonic()
-        if now - self._last_telemetry_time < 0.1:  # 10 Hz
+        if now - self._last_telemetry_time < 0.1:
             return
         self._last_telemetry_time = now
 
@@ -607,7 +573,7 @@ class AirOSEngine:
         with self._telemetry_lock:
             self._telemetry = Telemetry(
                 timestamp=now,
-                state=self._state_machine.state.name,
+                state=self._lifecycle_mgr.state.value.upper() if self._enabled else "PAUSED",
                 gesture=self._current_gesture.name if self._current_gesture else "NONE",
                 confidence=self._current_confidence,
                 num_hands=tracking_result.num_hands if tracking_result else 0,
@@ -635,22 +601,22 @@ class AirOSEngine:
                 logger.error(f"Telemetry callback error: {e}")
 
     def get_telemetry(self) -> Telemetry:
-        """Thread-safe telemetry snapshot."""
         with self._telemetry_lock:
             return self._telemetry
 
     def _sleep_to_target(self, loop_start: float):
-        """Sleep for the remaining time in the target loop interval."""
         elapsed = time.monotonic() - loop_start
-        sleep_time = self.TARGET_LOOP_INTERVAL - elapsed
+        sleep_time = self._target_loop_interval - elapsed
         if sleep_time > 0.001:
             time.sleep(sleep_time)
 
     def pause(self):
-        """Pause gesture input (camera continues)."""
+        """Pause gesture input."""
         self._enabled = False
+        self._safety_mgr.release_all_held_input(reason="pause")
         self._input.disable()
         self._state_machine.force_state(InteractionState.PAUSED)
+        self._lifecycle_mgr.transition_to(EngineState.PAUSED)
         logger.info("Engine PAUSED")
 
     def resume(self):
@@ -658,19 +624,21 @@ class AirOSEngine:
         self._enabled = True
         self._input.enable()
         self._state_machine.force_state(InteractionState.POINTER)
+        self._lifecycle_mgr.transition_to(EngineState.RUNNING)
         logger.info("Engine RESUMED")
 
     def start_calibration(self):
-        """Start the guided calibration workflow."""
+        """Start guided calibration."""
         self._calibration_active = True
-        self._enabled = False  # Disable gesture input during calibration
+        self._enabled = False
+        self._safety_mgr.release_all_held_input(reason="calibration_start")
         self._input.disable()
         self._calibration.start()
         self._state_machine.force_state(InteractionState.CALIBRATION)
         logger.info("Calibration started")
 
     def stop_calibration(self, apply: bool = True):
-        """Stop calibration. If apply=True, saves the resulting profile."""
+        """Stop calibration."""
         self._calibration_active = False
         if apply:
             self._calibration.save()
@@ -685,8 +653,23 @@ class AirOSEngine:
     def get_calibration_status(self) -> dict:
         return self._calibration.get_status()
 
+    def _apply_cursor_config(self):
+        """Apply CursorConfigModel from authoritative ConfigManager."""
+        c = self._config_mgr.config.cursor
+        self._cursor.update_config(
+            region_left=c.region_left,
+            region_right=c.region_right,
+            region_top=c.region_top,
+            region_bottom=c.region_bottom,
+            dead_zone=c.dead_zone,
+            sensitivity=c.sensitivity,
+            one_euro_min_cutoff=c.smoothing_min_cutoff,
+            one_euro_beta=c.smoothing_beta,
+            one_euro_d_cutoff=c.smoothing_d_cutoff,
+        )
+
     def _apply_calibration_profile(self):
-        """Apply the calibration profile to cursor and gesture detectors."""
+        """Apply calibration profile."""
         p = self._calibration.profile
         if not isinstance(p, CalibrationProfile):
             return
@@ -704,58 +687,42 @@ class AirOSEngine:
         self._scroll.SCROLL_VELOCITY_THRESHOLD = p.scroll_velocity_threshold
         self._swipe.MIN_DISPLACEMENT = p.swipe_displacement_threshold
         self._swipe.MIN_VELOCITY = p.swipe_velocity_threshold
-        logger.info(
-            f"Calibration profile applied: "
-            f"pinch={p.pinch_threshold:.2f} region=({p.region_left:.2f},{p.region_top:.2f})"
-            f"-({p.region_right:.2f},{p.region_bottom:.2f}) sensitivity={p.sensitivity:.2f}"
-        )
+
+    def settings_update(self, patch: Dict[str, Any]) -> dict:
+        """Update authoritative configuration from settings IPC command."""
+        updated = self._config_mgr.update_dict(patch)
+        self._apply_cursor_config()
+        self._apply_gesture_thresholds()
+        return updated.to_dict()
+
+    def settings_get(self) -> dict:
+        """Get authoritative configuration as dict."""
+        return self._config_mgr.config.to_dict()
 
     def _on_profile_changed(self, profile_id: str):
-        """Re-apply gesture thresholds when the active app profile changes."""
         self._apply_gesture_thresholds()
-        logger.info(f"App profile changed -> {profile_id}: thresholds reapplied")
 
     def _apply_gesture_thresholds(self):
-        """Apply gesture thresholds (with active profile overrides) from the
-        registry to the detector classes."""
         try:
-            pinch = self._registry.get_by_id("pinch_click")
-            if pinch and pinch.thresholds.get("distance"):
-                self._pinch.PINCH_THRESHOLD = float(pinch.thresholds["distance"])
-
-            scroll = self._registry.get_by_id("scroll_down")
-            if scroll and scroll.thresholds.get("velocity"):
-                self._scroll.SCROLL_VELOCITY_THRESHOLD = float(scroll.thresholds["velocity"])
-
-            swipe = self._registry.get_by_id("swipe_left")
-            if swipe:
-                if swipe.thresholds.get("displacement"):
-                    self._swipe.MIN_DISPLACEMENT = float(swipe.thresholds["displacement"])
-                if swipe.thresholds.get("velocity"):
-                    self._swipe.MIN_VELOCITY = float(swipe.thresholds["velocity"])
-
-            palm = self._registry.get_by_id("open_palm")
-            if palm:
-                if palm.thresholds.get("hold_duration"):
-                    self._palm.HOLD_DURATION = float(palm.thresholds["hold_duration"])
-
-            two_hand = self._registry.get_by_id("two_hands")
-            if two_hand:
-                if two_hand.thresholds.get("hold_duration"):
-                    self._two_hand.HOLD_DURATION = float(two_hand.thresholds["hold_duration"])
+            g_cfg = self._config_mgr.config.gestures
+            self._pinch.PINCH_THRESHOLD = g_cfg.pinch_threshold
+            self._pinch.RELEASE_THRESHOLD = g_cfg.release_threshold
+            self._scroll.SCROLL_VELOCITY_THRESHOLD = g_cfg.scroll_velocity_threshold
+            self._swipe.MIN_DISPLACEMENT = g_cfg.swipe_displacement_threshold
+            self._swipe.MIN_VELOCITY = g_cfg.swipe_velocity_threshold
+            self._palm.HOLD_DURATION = g_cfg.open_palm_hold_sec
+            self._two_hand.HOLD_DURATION = g_cfg.two_hand_hold_sec
         except Exception as e:
             logger.error(f"Failed to apply gesture thresholds: {e}")
 
     def studio_start_recording(self):
-        """Start recording a custom gesture."""
         self._studio.start_recording()
         logger.info("Gesture recording started")
 
     def studio_finish_recording(self, name: str = "Custom Gesture"):
-        """Finish recording and save the custom gesture template."""
         template = self._studio.finish_recording(name)
         if template is None:
-            logger.warning("Gesture recording failed (too few frames?)")
+            logger.warning("Gesture recording failed")
             return None
         logger.info(f"Gesture recorded: {template.name} ({template.id})")
         return template.to_dict()
@@ -779,7 +746,6 @@ class AirOSEngine:
             return False
         return self._studio.set_template_action(template_id, action)
 
-    # ── App profiles ──────────────────────────────────────────────────
     def profile_set(self, profile_id: str) -> bool:
         return self._profile_manager.set_profile(profile_id)
 
@@ -794,8 +760,7 @@ class AirOSEngine:
         p = self._registry.get_profile(profile_id)
         return p.gesture_overrides if p else {}
 
-    def profile_set_override(self, profile_id: str, gesture_id: str,
-                             override: dict) -> bool:
+    def profile_set_override(self, profile_id: str, gesture_id: str, override: dict) -> bool:
         p = self._registry.get_profile(profile_id)
         if p is None:
             return False
@@ -805,8 +770,11 @@ class AirOSEngine:
     def stop(self):
         """Stop the engine gracefully."""
         logger.info("Stopping AirOS engine...")
+        self._lifecycle_mgr.transition_to(EngineState.STOPPING)
         self._running = False
+        self._safety_mgr.release_all_held_input(reason="stop")
         self._input.disable()
         self._camera.stop()
         self._tracker.close()
+        self._lifecycle_mgr.transition_to(EngineState.STOPPED)
         logger.info("AirOS engine stopped")

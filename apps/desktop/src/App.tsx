@@ -3,6 +3,7 @@ import Dashboard from './components/Dashboard/Dashboard'
 import GestureStudio from './components/GestureStudio/GestureStudio'
 import Calibration from './components/Calibration/Calibration'
 import Settings from './components/Settings/Settings'
+import KeyboardOverlay from './components/KeyboardOverlay/KeyboardOverlay'
 import { useEngine } from './hooks/useEngine'
 import './App.css'
 
@@ -10,6 +11,7 @@ type Page = 'dashboard' | 'gestures' | 'calibration' | 'settings'
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard')
+  const { telemetry } = useEngine()
 
   return (
     <div className="app-shell">
@@ -74,6 +76,9 @@ export default function App() {
           {page === 'settings' && <Settings />}
         </main>
       </div>
+
+      {/* ── Virtual Keyboard Overlay ──────────────────────── */}
+      <KeyboardOverlay keyboardState={telemetry.keyboard_state} />
     </div>
   )
 }
@@ -88,5 +93,3 @@ function NavItem({ id, icon, label, active, onClick }: {
     </button>
   )
 }
-
-

@@ -2,24 +2,11 @@ import React, { useState } from 'react'
 import { useEngine } from '../../hooks/useEngine'
 import './GestureStudio.css'
 
-interface CustomGesture {
-  id: string
-  name: string
-  action: string
-  samples: number
-  quality: number
-  date: string
-}
-
 export default function GestureStudio() {
-  const { telemetry } = useEngine()
+  const { telemetry, templates, recordGestureStart, recordGestureFinish, deleteGesture } = useEngine()
   const [recording, setRecording] = useState(false)
   const [gestureName, setGestureName] = useState('')
   const [selectedAction, setSelectedAction] = useState('left_click')
-  const [customGestures, setCustomGestures] = useState<CustomGesture[]>([
-    { id: 'g1', name: 'Peace Sign', action: 'win_minimize', samples: 10, quality: 98, date: '2026-08-11' },
-    { id: 'g2', name: 'Thumbs Up', action: 'media_play_pause', samples: 10, quality: 95, date: '2026-08-11' }
-  ])
 
   const actionOptions = [
     { label: 'Left Click', value: 'left_click' },
@@ -35,27 +22,20 @@ export default function GestureStudio() {
     { label: 'Volume Down', value: 'volume_down' },
   ]
 
-  const handleStartRecording = () => {
-    if (!gestureName.trim()) return
-    setRecording(true)
-    // Simulate multi-pass recording process (10 samples)
-    setTimeout(() => {
+  const handleToggleRecording = () => {
+    if (!recording) {
+      if (!gestureName.trim()) return
+      setRecording(true)
+      recordGestureStart()
+    } else {
       setRecording(false)
-      const newG: CustomGesture = {
-        id: `g_${Date.now()}`,
-        name: gestureName.trim(),
-        action: selectedAction,
-        samples: 10,
-        quality: 96,
-        date: new Date().toISOString().split('T')[0]
-      }
-      setCustomGestures(prev => [...prev, newG])
+      recordGestureFinish(gestureName.trim())
       setGestureName('')
-    }, 3000)
+    }
   }
 
   const handleDelete = (id: string) => {
-    setCustomGestures(prev => prev.filter(g => g.id !== id))
+    deleteGesture(id)
   }
 
   return (
@@ -109,7 +89,7 @@ export default function GestureStudio() {
               {recording ? (
                 <div className="recording-animation">
                   <div className="pulse-ring" />
-                  <span className="rec-text">Recording 10 Landmarks Samples...</span>
+                  <span className="rec-text">Capturing Real Hand Landmark Samples...</span>
                   <span className="rec-subtext">Perform gesture naturally in front of camera</span>
                 </div>
               ) : (
@@ -123,10 +103,10 @@ export default function GestureStudio() {
 
           <button
             className={`btn btn-large ${recording ? 'btn-danger' : 'btn-primary'}`}
-            onClick={handleStartRecording}
-            disabled={!gestureName.trim() || recording}
+            onClick={handleToggleRecording}
+            disabled={!recording && !gestureName.trim()}
           >
-            {recording ? 'Recording in progress...' : '⏺ Start 3s Recording'}
+            {recording ? '⏹ Finish & Save Recording' : '⏺ Start Real Landmark Recording'}
           </button>
         </div>
 
@@ -134,29 +114,28 @@ export default function GestureStudio() {
         <div className="studio-card list-card">
           <div className="card-header">
             <span className="card-icon">⚡</span>
-            <h3>Custom Gesture Templates ({customGestures.length})</h3>
+            <h3>Custom Gesture Templates ({templates ? templates.length : 0})</h3>
           </div>
 
           <div className="custom-gestures-list">
-            {customGestures.length === 0 ? (
+            {!templates || templates.length === 0 ? (
               <div className="empty-state">
                 <span>No custom gestures recorded yet.</span>
-                <span>Use the recording panel to create your first custom gesture.</span>
+                <span>Use the recording panel to capture real hand landmarks.</span>
               </div>
             ) : (
-              customGestures.map(g => (
-                <div key={g.id} className="custom-gesture-item">
+              templates.map((g: any) => (
+                <div key={g.id || g.name} className="custom-gesture-item">
                   <div className="g-item-left">
                     <div className="g-item-name">{g.name}</div>
                     <div className="g-item-meta">
-                      <span className="meta-tag">{g.samples} samples</span>
-                      <span className="meta-tag quality">{g.quality}% match score</span>
-                      <span className="meta-date">{g.date}</span>
+                      <span className="meta-tag">{g.num_samples || 90} frames</span>
+                      <span className="meta-tag quality">{g.threshold ? (1.0 - g.threshold).toFixed(2) : '0.85'} threshold</span>
                     </div>
                   </div>
 
                   <div className="g-item-right">
-                    <span className="action-chip">{g.action}</span>
+                    <span className="action-chip">{g.action || 'left_click'}</span>
                     <button
                       className="btn-icon-danger"
                       onClick={() => handleDelete(g.id)}

@@ -1,13 +1,9 @@
 """
 AirOS — Main Entry Point
-Starts the engine with IPC server and safety hotkey.
+Starts the engine with IPC server, lifecycle manager, and safety hotkey.
 
 Usage (from air-os directory):
     python run_engine.py [--no-ipc] [--debug]
-
-The engine runs in the main thread.
-The IPC WebSocket server runs in a background thread.
-The global hotkey listener runs in a background thread.
 """
 
 import sys
@@ -17,19 +13,18 @@ import argparse
 import threading
 import time
 
-# Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-
 from config.paths import get_logs_dir
+from engine.lifecycle import get_lifecycle_manager, EngineState
+
 
 def setup_logging(debug: bool = False):
     level = logging.DEBUG if debug else logging.INFO
     import sys, io
     logs_dir = get_logs_dir()
     os.makedirs(logs_dir, exist_ok=True)
-    # Force UTF-8 on Windows console to handle emoji/arrows in logs
     if hasattr(sys.stdout, 'reconfigure'):
         try:
             sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -67,15 +62,17 @@ def main():
     logger.info("  AirOS Engine v0.1.0")
     logger.info("="*50)
 
-    # Import engine
     from engine.main import AirOSEngine
     from ipc.server import IPCServer
 
-    # IPC server
+    lifecycle = get_lifecycle_manager()
+
     ipc = None
     if not args.no_ipc:
         def on_command(command: str, data: dict):
             logger.info(f"Command received: {command}")
+            payload = data.get("payload", data) if isinstance(data.get("payload"), dict) else data
+
             if command == "stop":
                 engine.stop()
             elif command == "pause":
@@ -91,7 +88,9 @@ def main():
             elif command == "gesture_start_recording":
                 engine.studio_start_recording()
             elif command == "gesture_finish_recording":
-                engine.studio_finish_recording(data.get("name", "Custom Gesture"))
+                rec = engine.studio_finish_recording(payload.get("name", "Custom Gesture"))
+                if ipc and rec:
+                    ipc.push_message({"type": "gesture_recorded", "template": rec})
             elif command == "gesture_cancel_recording":
                 engine.studio_cancel_recording()
             elif command == "gesture_list":
@@ -99,13 +98,19 @@ def main():
                 if ipc:
                     ipc.push_message({"type": "gesture_list", "templates": result})
             elif command == "gesture_delete":
-                engine.studio_delete(data.get("id", ""))
+                engine.studio_delete(payload.get("id", ""))
+                if ipc:
+                    ipc.push_message({"type": "gesture_list", "templates": engine.studio_list()})
             elif command == "gesture_rename":
-                engine.studio_rename(data.get("id", ""), data.get("name", ""))
+                engine.studio_rename(payload.get("id", ""), payload.get("name", ""))
+                if ipc:
+                    ipc.push_message({"type": "gesture_list", "templates": engine.studio_list()})
             elif command == "gesture_set_action":
-                engine.studio_set_action(data.get("id", ""), data.get("action", ""))
+                engine.studio_set_action(payload.get("id", ""), payload.get("action", ""))
+                if ipc:
+                    ipc.push_message({"type": "gesture_list", "templates": engine.studio_list()})
             elif command == "profile_set":
-                engine.profile_set(data.get("id", ""))
+                engine.profile_set(payload.get("id", ""))
             elif command == "profile_list":
                 if ipc:
                     ipc.push_message({
@@ -115,15 +120,32 @@ def main():
                     })
             elif command == "profile_set_override":
                 engine.profile_set_override(
-                    data.get("profile_id", ""),
-                    data.get("gesture_id", ""),
-                    data.get("override", {}),
+                    payload.get("profile_id", ""),
+                    payload.get("gesture_id", ""),
+                    payload.get("override", {}),
                 )
+            elif command == "settings_update":
+                updated = engine.settings_update(payload.get("settings", payload))
+                if ipc:
+                    ipc.push_message({"type": "settings_data", "settings": updated})
+            elif command == "settings_get":
+                cfg = engine.settings_get()
+                if ipc:
+                    ipc.push_message({"type": "settings_data", "settings": cfg})
 
         ipc = IPCServer(on_command=on_command)
+
+        def on_lifecycle_change(state: EngineState, error_msg: str = None):
+            if ipc:
+                ipc.push_message({
+                    "type": "engine_state",
+                    "state": state.value,
+                    "error": error_msg,
+                })
+
+        lifecycle.add_state_callback(on_lifecycle_change)
         ipc.start()
 
-    # Create engine with telemetry callback
     def on_telemetry(telemetry):
         if ipc:
             ipc.push_telemetry(telemetry.to_dict())
@@ -132,7 +154,6 @@ def main():
     if args.max_frames is not None:
         engine._max_frames = args.max_frames
 
-    # Safety hotkey: Ctrl+Alt+A → stop
     def setup_hotkey():
         try:
             from pynput import keyboard as kb
@@ -153,7 +174,6 @@ def main():
     hotkey_thread.start()
     logger.info("Safety hotkey: Ctrl+Alt+A to stop")
 
-    # Start engine (blocking — runs main loop here)
     try:
         success = engine.start()
         if not success:

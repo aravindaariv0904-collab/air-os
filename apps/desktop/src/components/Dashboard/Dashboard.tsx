@@ -121,6 +121,7 @@ export default function Dashboard() {
 
   const stateColor = {
     running: 'var(--accent-green)',
+    ready: 'var(--accent-green)',
     paused: 'var(--accent-amber)',
     error: 'var(--accent-red)',
     stopped: 'var(--text-muted)',

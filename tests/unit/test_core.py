@@ -347,5 +347,113 @@ class TestCursorEngine:
         assert sx <= 1919 and sy <= 1079
 
 
+# =============================================================================
+# Architectural Services Tests
+# =============================================================================
+
+class TestConfigManager:
+    def test_default_config_valid(self):
+        from config.config_manager import ConfigManager
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            cfg_mgr = ConfigManager(config_file=tmp_path)
+            cfg = cfg_mgr.config
+            assert cfg.version == "1.0"
+            assert cfg.cursor.sensitivity == 1.0
+            assert cfg.gestures.pinch_threshold == 0.30
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    def test_atomic_save_and_update(self):
+        from config.config_manager import ConfigManager
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            cfg_mgr = ConfigManager(config_file=tmp_path)
+            updated = cfg_mgr.update_dict({"cursor": {"sensitivity": 1.8}})
+            assert updated.cursor.sensitivity == 1.8
+            # Reload from disk
+            cfg_mgr2 = ConfigManager(config_file=tmp_path)
+            assert cfg_mgr2.config.cursor.sensitivity == 1.8
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+
+class TestInputSafetyManager:
+    def test_record_and_release_held_input(self):
+        from input.safety_manager import InputSafetyManager
+        class MockAdapter:
+            def __init__(self):
+                self.released_buttons = []
+                self.released_keys = []
+            def mouse_up(self, btn="left"):
+                self.released_buttons.append(btn)
+            def key_up(self, vk):
+                self.released_keys.append(vk)
+
+        adapter = MockAdapter()
+        safety = InputSafetyManager(adapter=adapter)
+        safety.record_mouse_down("left")
+        safety.record_key_down(0x10)  # VK_SHIFT
+        assert safety.is_drag_active
+
+        released_count = safety.release_all_held_input(reason="unit_test")
+        assert released_count == 2
+        assert "left" in adapter.released_buttons
+        assert 0x10 in adapter.released_keys
+        assert not safety.is_drag_active
+
+
+class TestEngineLifecycle:
+    def test_state_transitions_and_callbacks(self):
+        from engine.lifecycle import EngineLifecycleManager, EngineState
+        mgr = EngineLifecycleManager()
+        assert mgr.state == EngineState.STOPPED
+
+        history = []
+        mgr.add_state_callback(lambda st, err: history.append(st))
+
+        mgr.transition_to(EngineState.STARTING)
+        mgr.transition_to(EngineState.RUNNING)
+        assert mgr.is_running()
+        assert history == [EngineState.STARTING, EngineState.RUNNING]
+
+
+class TestIPCProtocol:
+    def test_protocol_allowlist_and_auth(self):
+        import json
+        from ipc.protocol import parse_and_validate_ipc_message, IPCAuthManager, create_ipc_message
+        auth = IPCAuthManager(token="test_secret_token")
+        
+        # Valid control message
+        valid_msg = create_ipc_message("control", {"command": "start"}, auth_token="test_secret_token")
+        is_ok, parsed, err = parse_and_validate_ipc_message(
+            json.dumps(valid_msg), auth_manager=auth, require_auth=True
+        )
+        assert is_ok, f"Expected valid message, got error: {err}"
+
+        # Unauthorized message
+        unauth_msg = create_ipc_message("control", {"command": "start"}, auth_token="wrong_token")
+        is_ok, parsed, err = parse_and_validate_ipc_message(
+            json.dumps(unauth_msg), auth_manager=auth, require_auth=True
+        )
+        assert not is_ok
+        assert "Unauthorized" in err
+
+        # Disallowed command
+        forbidden_msg = create_ipc_message("control", {"command": "exec_shell_rm_rf"}, auth_token="test_secret_token")
+        is_ok, parsed, err = parse_and_validate_ipc_message(
+            json.dumps(forbidden_msg), auth_manager=auth, require_auth=True
+        )
+        assert not is_ok
+        assert "allowlist" in err
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

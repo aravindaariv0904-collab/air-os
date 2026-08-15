@@ -1,11 +1,12 @@
 /**
  * AirOS — Electron Main Process
  * Launches the Python engine, creates the BrowserWindow, and manages system tray.
+ * Hardened for security: context isolation, sandboxing, CSP, navigation limits.
  */
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage } = require('electron')
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, session } = require('electron')
 const path = require('path')
-const { spawn, execSync } = require('child_process')
+const { spawn } = require('child_process')
 const fs = require('fs')
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -18,23 +19,20 @@ const IPC_PORT = 7890
 let mainWindow = null
 let tray = null
 let engineProcess = null
-let ws = null // WebSocket to Python engine
-let engineState = 'stopped' // 'stopped' | 'starting' | 'running' | 'paused' | 'error'
+let ws = null
+let engineState = 'stopped'
 
 function getEngineExecution() {
-  // 1. Packaged production executable in extraResources
   const packagedExe = path.join(process.resourcesPath, 'AirOSEngine', 'AirOSEngine.exe')
   if (fs.existsSync(packagedExe)) {
     return { command: packagedExe, args: [], cwd: path.dirname(packagedExe) }
   }
 
-  // 2. Standalone compiled engine in project dist/
   const distExe = path.join(PROJECT_ROOT, 'dist', 'AirOSEngine', 'AirOSEngine.exe')
   if (fs.existsSync(distExe)) {
     return { command: distExe, args: [], cwd: path.dirname(distExe) }
   }
 
-  // 3. Fallback to venv for development
   return { command: PYTHON_EXE, args: [ENGINE_SCRIPT], cwd: PROJECT_ROOT }
 }
 
@@ -44,13 +42,15 @@ function startEngine() {
   const execConfig = getEngineExecution()
 
   if (!fs.existsSync(execConfig.command)) {
-    console.error('AirOS Engine executable/python not found:', execConfig.command)
-    sendToRenderer('engine-error', { message: 'AirOS Engine not found.' })
+    console.error('AirOS Engine executable not found:', execConfig.command)
+    sendToRenderer('engine-error', { message: 'AirOS Engine executable not found.' })
     return
   }
 
   engineState = 'starting'
   console.log('Starting AirOS engine:', execConfig.command)
+  updateTrayMenu()
+  sendToRenderer('engine-state', { state: engineState })
 
   fs.mkdirSync(LOGS_DIR, { recursive: true })
   const logFile = fs.createWriteStream(path.join(LOGS_DIR, 'electron-engine.log'), { flags: 'a' })
@@ -58,104 +58,109 @@ function startEngine() {
   engineProcess = spawn(execConfig.command, execConfig.args, {
     cwd: execConfig.cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env },
   })
 
-  engineProcess.stdout.on('data', (data) => {
-    const msg = data.toString()
-    logFile.write(msg)
-    if (msg.includes('pipeline started') || msg.includes('RESUMED')) {
-      engineState = 'running'
-      connectWebSocket()
-      updateTrayMenu()
-      sendToRenderer('engine-state', { state: engineState })
-    }
+  engineProcess.stdout.on('data', (chunk) => {
+    logFile.write(chunk)
   })
 
-  engineProcess.stderr.on('data', (data) => {
-    logFile.write(data.toString())
+  engineProcess.stderr.on('data', (chunk) => {
+    logFile.write(chunk)
   })
 
   engineProcess.on('exit', (code) => {
-    console.log(`Engine exited with code ${code}`)
+    console.log(`Engine process exited with code ${code}`)
     engineProcess = null
+    if (ws) {
+      ws.close()
+      ws = null
+    }
     engineState = 'stopped'
-    if (ws) { ws.close(); ws = null }
     updateTrayMenu()
     sendToRenderer('engine-state', { state: engineState })
   })
 
-  engineProcess.on('error', (err) => {
-    console.error('Engine process error:', err)
-    engineState = 'error'
-    sendToRenderer('engine-error', { message: err.message })
-  })
+  connectWebSocket()
 }
 
 function stopEngine() {
   if (engineProcess) {
-    engineProcess.kill('SIGTERM')
-    engineProcess = null
+    console.log('Stopping AirOS engine process...')
+    sendEngineCommand('stop')
+    setTimeout(() => {
+      if (engineProcess) {
+        try { engineProcess.kill('SIGTERM') } catch (e) {}
+      }
+    }, 1500)
   }
-  if (ws) { ws.close(); ws = null }
+  if (ws) {
+    ws.close()
+    ws = null
+  }
   engineState = 'stopped'
   updateTrayMenu()
   sendToRenderer('engine-state', { state: engineState })
 }
 
-function sendEngineCommand(command) {
+function sendEngineCommand(command, extraData = {}) {
   if (ws && ws.readyState === 1 /* OPEN */) {
-    ws.send(JSON.stringify({ type: 'control', command }))
+    ws.send(JSON.stringify({
+      type: 'control',
+      version: '1.0',
+      payload: { command, ...extraData }
+    }))
   }
 }
 
-// ─── WebSocket Connection to Python Engine ───────────────────────────────────
-
 function connectWebSocket() {
   const WebSocket = require('ws')
-  
+
   const connect = () => {
-    if (ws) return
-    ws = new WebSocket(`ws://localhost:${IPC_PORT}`)
-    
+    if (ws || !engineProcess) return
+    ws = new WebSocket(`ws://127.0.0.1:${IPC_PORT}`)
+
     ws.on('open', () => {
       console.log('Connected to AirOS engine WebSocket')
+      engineState = 'running'
+      updateTrayMenu()
+      sendToRenderer('engine-state', { state: engineState })
       sendToRenderer('ipc-connected', {})
     })
-    
+
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString())
+        const payload = msg.payload || msg
         if (msg.type === 'telemetry') {
-          sendToRenderer('telemetry', msg)
+          sendToRenderer('telemetry', payload)
         } else if (msg.type === 'profile_list') {
-          sendToRenderer('profile-list', msg)
+          sendToRenderer('profile-list', payload)
+        } else if (msg.type === 'engine_state') {
+          engineState = payload.state || engineState
+          updateTrayMenu()
+          sendToRenderer('engine-state', { state: engineState })
         }
       } catch (e) {}
     })
-    
+
     ws.on('close', () => {
       ws = null
       sendToRenderer('ipc-disconnected', {})
-      // Reconnect after 2s if engine still running
       if (engineProcess) {
         setTimeout(connect, 2000)
       }
     })
-    
-    ws.on('error', (err) => {
+
+    ws.on('error', () => {
       ws = null
       if (engineProcess) {
-        setTimeout(connect, 3000)
+        setTimeout(connect, 2000)
       }
     })
   }
-  
-  // Wait a second for engine to start WebSocket server
+
   setTimeout(connect, 1000)
 }
-
-// ─── Window Management ───────────────────────────────────────────────────────
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -163,21 +168,40 @@ function createWindow() {
     height: 750,
     minWidth: 900,
     minHeight: 600,
-    frame: false,        // Custom title bar
+    frame: false,
     transparent: false,
     backgroundColor: '#0f1117',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
     icon: path.join(__dirname, '..', 'public', 'icon.png'),
     show: false,
   })
 
+  // Set CSP headers
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws://127.0.0.1:7890 ws://localhost:7890; img-src 'self' data:;"
+        ]
+      }
+    })
+  })
+
+  // Prevent unexpected navigation or popups
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (e) => {
+    e.preventDefault()
+  })
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    // mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
@@ -198,10 +222,7 @@ function createWindow() {
   })
 }
 
-// ─── System Tray ─────────────────────────────────────────────────────────────
-
 function createTray() {
-  // Use a simple PNG icon (create placeholder if not exists)
   const iconPath = path.join(__dirname, '..', 'public', 'icon16.png')
   let icon
   try {
@@ -209,7 +230,7 @@ function createTray() {
   } catch {
     icon = nativeImage.createEmpty()
   }
-  
+
   tray = new Tray(icon)
   tray.setToolTip('AirOS — Touchless Control')
   tray.on('double-click', showWindow)
@@ -257,25 +278,28 @@ function showWindow() {
   }
 }
 
-// ─── IPC Handlers (Renderer → Main) ─────────────────────────────────────────
+// IPC Handlers with sender validation
+function validateSender(event) {
+  return mainWindow && event.sender === mainWindow.webContents
+}
 
-ipcMain.on('engine-start', () => startEngine())
-ipcMain.on('engine-stop', () => stopEngine())
-ipcMain.on('engine-pause', () => sendEngineCommand('pause'))
-ipcMain.on('engine-resume', () => sendEngineCommand('resume'))
-ipcMain.on('engine-calibrate', () => sendEngineCommand('calibrate'))
-ipcMain.on('engine-profile-list', () => sendEngineCommand('profile_list'))
+ipcMain.on('engine-start', (event) => { if (validateSender(event)) startEngine() })
+ipcMain.on('engine-stop', (event) => { if (validateSender(event)) stopEngine() })
+ipcMain.on('engine-pause', (event) => { if (validateSender(event)) sendEngineCommand('pause') })
+ipcMain.on('engine-resume', (event) => { if (validateSender(event)) sendEngineCommand('resume') })
+ipcMain.on('engine-calibrate', (event) => { if (validateSender(event)) sendEngineCommand('calibrate') })
+ipcMain.on('engine-profile-list', (event) => { if (validateSender(event)) sendEngineCommand('profile_list') })
 ipcMain.on('engine-profile-set', (event, id) => {
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'control', command: 'profile_set', data: { id } }))
+  if (validateSender(event)) sendEngineCommand('profile_set', { id })
+})
+ipcMain.on('window-minimize', (event) => { if (validateSender(event)) mainWindow?.minimize() })
+ipcMain.on('window-maximize', (event) => {
+  if (validateSender(event)) {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+    else mainWindow?.maximize()
   }
 })
-ipcMain.on('window-minimize', () => mainWindow?.minimize())
-ipcMain.on('window-maximize', () => {
-  if (mainWindow?.isMaximized()) mainWindow.unmaximize()
-  else mainWindow?.maximize()
-})
-ipcMain.on('window-close', () => mainWindow?.hide())
+ipcMain.on('window-close', (event) => { if (validateSender(event)) mainWindow?.hide() })
 
 function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -283,20 +307,15 @@ function sendToRenderer(channel, data) {
   }
 }
 
-// ─── App Lifecycle ───────────────────────────────────────────────────────────
-
 app.whenReady().then(() => {
   createWindow()
   createTray()
-  // Auto-start engine in development
   if (isDev) {
     setTimeout(startEngine, 1500)
   }
 })
 
-app.on('window-all-closed', () => {
-  // Don't quit — keep running in tray
-})
+app.on('window-all-closed', () => {})
 
 app.on('activate', () => {
   if (!mainWindow) createWindow()
