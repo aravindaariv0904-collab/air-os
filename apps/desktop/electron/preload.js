@@ -17,6 +17,20 @@ contextBridge.exposeInMainWorld('airos', {
   profileList: () => ipcRenderer.send('engine-profile-list'),
   profileSet: (id) => ipcRenderer.send('engine-profile-set', id),
 
+  // Settings
+  settingsGet: () => ipcRenderer.send('engine-settings-get'),
+  settingsUpdate: (settings) => ipcRenderer.send('engine-settings-update', settings),
+
+  // Voice assistant
+  voiceStart: () => ipcRenderer.send('engine-voice-start'),
+  voiceStop: () => ipcRenderer.send('engine-voice-stop'),
+  voiceStatus: () => ipcRenderer.send('engine-voice-status'),
+  voiceCommand: (text) => ipcRenderer.send('engine-voice-command', text),
+
+  // Desktop actions
+  actionExecute: (skill, params) => ipcRenderer.send('engine-action-execute', { skill, params }),
+  screenshotCapture: (target) => ipcRenderer.send('engine-screenshot', target),
+
   // Window control  
   minimize: () => ipcRenderer.send('window-minimize'),
   maximize: () => ipcRenderer.send('window-maximize'),
@@ -42,5 +56,17 @@ contextBridge.exposeInMainWorld('airos', {
   onProfileList: (cb) => {
     ipcRenderer.on('profile-list', (_, data) => cb(data))
     return () => ipcRenderer.removeAllListeners('profile-list')
+  },
+  onSettings: (cb) => {
+    ipcRenderer.on('settings-data', (_, data) => cb(data))
+    return () => ipcRenderer.removeAllListeners('settings-data')
+  },
+  onVoiceStatus: (cb) => {
+    ipcRenderer.on('voice-status', (_, data) => cb(data))
+    return () => ipcRenderer.removeAllListeners('voice-status')
+  },
+  onActionResult: (cb) => {
+    ipcRenderer.on('action-result', (_, data) => cb(data))
+    return () => ipcRenderer.removeAllListeners('action-result')
   },
 })

@@ -15,6 +15,14 @@ export interface Telemetry {
   foreground_app?: string
   keyboard_state?: any
   calibration?: any
+  eye?: {
+    face_present?: boolean
+    ear?: number
+    blink_count?: number
+    triple_blink_count?: number
+    last_event?: string
+  }
+  voice?: any
 }
 
 export interface EngineStatus {
@@ -29,6 +37,26 @@ export interface GestureProfile {
   active: boolean
   app_matchers: string[]
   gesture_overrides: Record<string, unknown>
+}
+
+export interface VoiceStatus {
+  state?: string
+  enabled?: boolean
+  wake_word?: string
+  last_transcript?: string
+  wake_count?: number
+  tts_available?: boolean
+  mic_available?: boolean
+  error?: string
+}
+
+export interface ActionResult {
+  ok?: boolean
+  skill?: string
+  message?: string
+  verified?: boolean
+  ambiguous?: boolean
+  detail?: Record<string, unknown>
 }
 
 const INITIAL_TELEMETRY: Telemetry = {
@@ -53,6 +81,8 @@ export function useEngine() {
   const [profiles, setProfiles] = useState<GestureProfile[]>([])
   const [templates, setTemplates] = useState<any[]>([])
   const [settings, setSettings] = useState<any>(null)
+  const [voice, setVoice] = useState<VoiceStatus>({})
+  const [lastAction, setLastAction] = useState<ActionResult | null>(null)
 
   // Direct WebSocket connection for Web Browser mode or Electron mode
   useEffect(() => {
@@ -73,10 +103,26 @@ export function useEngine() {
       const cleanupConnected = window.airos.onIPCConnected(() => {
         setStatus(prev => ({ ...prev, connected: true }))
         window.airos?.profileList()
+        window.airos?.settingsGet()
+        window.airos?.voiceStatus()
       })
 
       const cleanupProfileList = window.airos.onProfileList((data: { profiles?: GestureProfile[] }) => {
         if (data?.profiles) setProfiles(data.profiles)
+      })
+
+      const cleanupSettings = window.airos.onSettings((data: { settings?: any }) => {
+        if (data?.settings) setSettings(data.settings)
+      })
+
+      const cleanupVoice = window.airos.onVoiceStatus((data: any) => {
+        const status = data?.status || data?.data || data
+        if (status) setVoice(status)
+      })
+
+      const cleanupAction = window.airos.onActionResult((data: any) => {
+        const result = data?.data || data
+        if (result) setLastAction(result)
       })
 
       return () => {
@@ -85,6 +131,9 @@ export function useEngine() {
         cleanupError?.()
         cleanupConnected?.()
         cleanupProfileList?.()
+        cleanupSettings?.()
+        cleanupVoice?.()
+        cleanupAction?.()
       }
     } else {
       // Standalone Web Browser mode — connect directly to WebSocket server
@@ -100,6 +149,7 @@ export function useEngine() {
             socket?.send(JSON.stringify({ type: 'control', command: 'profile_list' }))
             socket?.send(JSON.stringify({ type: 'control', command: 'gesture_list' }))
             socket?.send(JSON.stringify({ type: 'control', command: 'settings_get' }))
+            socket?.send(JSON.stringify({ type: 'control', command: 'voice_status' }))
           }
 
           socket.onmessage = (event) => {
@@ -124,6 +174,12 @@ export function useEngine() {
                 if (payload.state) {
                   setStatus(prev => ({ ...prev, state: payload.state.toLowerCase() as EngineStatus['state'] }))
                 }
+              } else if (data.type === 'voice_status') {
+                const status = payload?.status || payload?.data || payload
+                if (status) setVoice(status)
+              } else if (data.type === 'action_result') {
+                const result = payload?.data || payload
+                if (result) setLastAction(result)
               }
             } catch (e) {
               console.error('IPC parse error:', e)
@@ -184,12 +240,39 @@ export function useEngine() {
   const recordGestureFinish = useCallback((name: string) => sendCommand('gesture_finish_recording', { name }), [sendCommand])
   const deleteGesture = useCallback((id: string) => sendCommand('gesture_delete', { id }), [sendCommand])
 
+  const voiceStart = useCallback(() => {
+    if (window.airos) window.airos.voiceStart()
+    else sendCommand('voice_start')
+  }, [sendCommand])
+  const voiceStop = useCallback(() => {
+    if (window.airos) window.airos.voiceStop()
+    else sendCommand('voice_stop')
+  }, [sendCommand])
+  const voiceStatus = useCallback(() => {
+    if (window.airos) window.airos.voiceStatus()
+    else sendCommand('voice_status')
+  }, [sendCommand])
+  const voiceCommand = useCallback((text: string) => {
+    if (window.airos) window.airos.voiceCommand(text)
+    else sendCommand('voice_text_command', { text })
+  }, [sendCommand])
+  const executeAction = useCallback((skill: string, params: Record<string, any> = {}) => {
+    if (window.airos) window.airos.actionExecute(skill, params)
+    else sendCommand('action_execute', { skill, params })
+  }, [sendCommand])
+  const takeScreenshot = useCallback((target: string = 'active') => {
+    if (window.airos) window.airos.screenshotCapture(target)
+    else sendCommand('screenshot_capture', { target })
+  }, [sendCommand])
+
   return {
     telemetry,
     status,
     profiles,
     templates,
     settings,
+    voice,
+    lastAction,
     start,
     stop,
     pause,
@@ -200,6 +283,12 @@ export function useEngine() {
     recordGestureStart,
     recordGestureFinish,
     deleteGesture,
+    voiceStart,
+    voiceStop,
+    voiceStatus,
+    voiceCommand,
+    executeAction,
+    takeScreenshot,
   }
 }
 
@@ -213,6 +302,14 @@ declare global {
       calibrateEngine: () => void
       profileList: () => void
       profileSet: (id: string) => void
+      settingsGet: () => void
+      settingsUpdate: (settings: any) => void
+      voiceStart: () => void
+      voiceStop: () => void
+      voiceStatus: () => void
+      voiceCommand: (text: string) => void
+      actionExecute: (skill: string, params: Record<string, any>) => void
+      screenshotCapture: (target: string) => void
       minimize: () => void
       maximize: () => void
       close: () => void
@@ -221,6 +318,9 @@ declare global {
       onEngineError: (cb: (data: { message: string }) => void) => (() => void) | undefined
       onIPCConnected: (cb: () => void) => (() => void) | undefined
       onProfileList: (cb: (data: { profiles?: GestureProfile[] }) => void) => (() => void) | undefined
+      onSettings: (cb: (data: { settings?: any }) => void) => (() => void) | undefined
+      onVoiceStatus: (cb: (data: any) => void) => (() => void) | undefined
+      onActionResult: (cb: (data: any) => void) => (() => void) | undefined
     }
   }
 }

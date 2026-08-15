@@ -87,11 +87,47 @@ class SystemConfigModel:
 
 
 @dataclass
+class EyesConfigModel:
+    """Eye-tracking / blink gesture configuration."""
+    enabled: bool = True
+    triple_blink_action: str = "screenshot"
+    ear_threshold: float = 0.21
+    min_closed_ms: float = 40.0
+    max_closed_ms: float = 400.0
+    cooldown_ms: float = 4000.0
+
+    def validate(self):
+        self.ear_threshold = max(0.05, min(0.45, float(self.ear_threshold)))
+        self.min_closed_ms = max(10.0, min(500.0, float(self.min_closed_ms)))
+        self.max_closed_ms = max(50.0, min(1000.0, float(self.max_closed_ms)))
+        self.cooldown_ms = max(500.0, min(30000.0, float(self.cooldown_ms)))
+
+
+@dataclass
+class VoiceConfigModel:
+    """Local voice assistant configuration (Vosk + pyttsx3, fully offline)."""
+    enabled: bool = False
+    wake_word: str = "jarvis"
+    command_timeout_ms: int = 7000
+    silence_timeout_ms: int = 1400
+    tts_enabled: bool = True
+    wake_sensitivity: float = 0.6
+
+    def validate(self):
+        self.wake_word = (self.wake_word or "jarvis").strip().lower()
+        self.command_timeout_ms = max(2000, min(15000, int(self.command_timeout_ms)))
+        self.silence_timeout_ms = max(400, min(5000, int(self.silence_timeout_ms)))
+        self.wake_sensitivity = max(0.1, min(1.0, float(self.wake_sensitivity)))
+
+
+@dataclass
 class AppConfigModel:
     version: str = CONFIG_VERSION
     cursor: CursorConfigModel = field(default_factory=CursorConfigModel)
     gestures: GestureConfigModel = field(default_factory=GestureConfigModel)
     system: SystemConfigModel = field(default_factory=SystemConfigModel)
+    eyes: EyesConfigModel = field(default_factory=EyesConfigModel)
+    voice: VoiceConfigModel = field(default_factory=VoiceConfigModel)
 
     def to_dict(self) -> dict:
         return {
@@ -99,6 +135,8 @@ class AppConfigModel:
             "cursor": asdict(self.cursor),
             "gestures": asdict(self.gestures),
             "system": asdict(self.system),
+            "eyes": asdict(self.eyes),
+            "voice": asdict(self.voice),
         }
 
     @classmethod
@@ -107,8 +145,11 @@ class AppConfigModel:
         cursor = CursorConfigModel(**d.get("cursor", {})) if isinstance(d.get("cursor"), dict) else CursorConfigModel()
         gestures = GestureConfigModel(**d.get("gestures", {})) if isinstance(d.get("gestures"), dict) else GestureConfigModel()
         system = SystemConfigModel(**d.get("system", {})) if isinstance(d.get("system"), dict) else SystemConfigModel()
+        eyes = EyesConfigModel(**d.get("eyes", {})) if isinstance(d.get("eyes"), dict) else EyesConfigModel()
+        voice = VoiceConfigModel(**d.get("voice", {})) if isinstance(d.get("voice"), dict) else VoiceConfigModel()
 
-        cfg = cls(version=version, cursor=cursor, gestures=gestures, system=system)
+        cfg = cls(version=version, cursor=cursor, gestures=gestures, system=system,
+                  eyes=eyes, voice=voice)
         cfg.validate()
         return cfg
 
@@ -116,6 +157,8 @@ class AppConfigModel:
         self.cursor.validate()
         self.gestures.validate()
         self.system.validate()
+        self.eyes.validate()
+        self.voice.validate()
 
 
 class ConfigManager:
@@ -178,7 +221,7 @@ class ConfigManager:
         """Apply patch dictionary to config and save."""
         cur_dict = self._config.to_dict()
 
-        for section in ("cursor", "gestures", "system"):
+        for section in ("cursor", "gestures", "system", "eyes", "voice"):
             if section in updates and isinstance(updates[section], dict):
                 cur_dict[section].update(updates[section])
 

@@ -5,7 +5,7 @@ Handles webcam access using OpenCV with DirectShow backend for low latency.
 Strategy:
 - Uses CAP_DSHOW backend (Windows) for minimum capture latency.
 - Buffer size set to 1 to avoid stale frame buildup.
-- latest-frame strategy: grab() + retrieve() pattern to skip buffered frames.
+- latest-frame strategy: read() with the newest frame kept under lock.
 - Measures actual FPS and capture time per frame.
 """
 
@@ -143,24 +143,20 @@ class CameraCapture:
         """
         Internal capture loop running in a dedicated thread.
         Continuously captures frames and stores only the latest.
-        Uses grab() + retrieve() pattern for lower overhead than read().
+
+        Uses read() (grab+decode) which works across all DirectShow drivers.
+        Some webcams accept grab() but then fail/block on retrieve() for a
+        second or more, so the grab()+retrieve() optimization is avoided in
+        favor of reliability.
         """
         last_time = time.monotonic()
 
         while self._running:
             t0 = time.monotonic()
 
-            # grab() decodes faster and doesn't decode — used to skip stale frames
-            grabbed = self._cap.grab()
-            if not grabbed:
-                logger.warning("Frame grab failed")
-                self.metrics.update(time.monotonic() - t0, dropped=True)
-                continue
-
-            # retrieve() does the actual decode
-            ret, frame = self._cap.retrieve()
+            ret, frame = self._cap.read()
             if not ret or frame is None:
-                logger.warning("Frame retrieve failed")
+                logger.warning("Frame read failed")
                 self.metrics.update(time.monotonic() - t0, dropped=True)
                 continue
 

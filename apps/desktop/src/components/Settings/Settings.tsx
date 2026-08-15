@@ -8,6 +8,8 @@ export default function Settings() {
   const cursor = settings?.cursor || {}
   const gestures = settings?.gestures || {}
   const system = settings?.system || {}
+  const eyes = settings?.eyes || {}
+  const voice = settings?.voice || {}
 
   const [sensitivity, setSensitivity] = useState(cursor.sensitivity || 1.0)
   const [smoothing, setSmoothing] = useState(cursor.smoothing_min_cutoff || 1.2)
@@ -17,6 +19,13 @@ export default function Settings() {
   const [startMinimized, setStartMinimized] = useState(system.start_minimized || false)
   const [startOnBoot, setStartOnBoot] = useState(system.start_engine_on_launch || true)
   const [debugOverlay, setDebugOverlay] = useState(system.debug_logging || false)
+  const [eyesEnabled, setEyesEnabled] = useState(eyes.enabled !== false)
+  const [tripleBlinkAction, setTripleBlinkAction] = useState(eyes.triple_blink_action || 'screenshot')
+  const [earThreshold, setEarThreshold] = useState(eyes.ear_threshold || 0.21)
+  const [voiceEnabled, setVoiceEnabled] = useState(voice.enabled || false)
+  const [wakeWord, setWakeWord] = useState(voice.wake_word || 'jarvis')
+  const [ttsEnabled, setTtsEnabled] = useState(voice.tts_enabled !== false)
+  const [voiceTimeout, setVoiceTimeout] = useState(voice.command_timeout_ms || 7000)
 
   useEffect(() => {
     if (settings) {
@@ -33,6 +42,17 @@ export default function Settings() {
         setStartMinimized(settings.system.start_minimized || false)
         setStartOnBoot(settings.system.start_engine_on_launch || true)
         setDebugOverlay(settings.system.debug_logging || false)
+      }
+      if (settings.eyes) {
+        setEyesEnabled(settings.eyes.enabled !== false)
+        setTripleBlinkAction(settings.eyes.triple_blink_action || 'screenshot')
+        setEarThreshold(settings.eyes.ear_threshold || 0.21)
+      }
+      if (settings.voice) {
+        setVoiceEnabled(settings.voice.enabled || false)
+        setWakeWord(settings.voice.wake_word || 'jarvis')
+        setTtsEnabled(settings.voice.tts_enabled !== false)
+        setVoiceTimeout(settings.voice.command_timeout_ms || 7000)
       }
     }
   }, [settings])
@@ -75,6 +95,41 @@ export default function Settings() {
   const handleDebugToggle = (val: boolean) => {
     setDebugOverlay(val)
     updateSettings({ system: { debug_logging: val } })
+  }
+
+  const handleEyesEnabledToggle = (val: boolean) => {
+    setEyesEnabled(val)
+    updateSettings({ eyes: { enabled: val } })
+  }
+
+  const handleTripleBlinkAction = (val: string) => {
+    setTripleBlinkAction(val)
+    updateSettings({ eyes: { triple_blink_action: val } })
+  }
+
+  const handleEarThreshold = (val: number) => {
+    setEarThreshold(val)
+    updateSettings({ eyes: { ear_threshold: val } })
+  }
+
+  const handleVoiceEnabledToggle = (val: boolean) => {
+    setVoiceEnabled(val)
+    updateSettings({ voice: { enabled: val } })
+  }
+
+  const handleWakeWord = (val: string) => {
+    setWakeWord(val)
+    updateSettings({ voice: { wake_word: val } })
+  }
+
+  const handleTtsToggle = (val: boolean) => {
+    setTtsEnabled(val)
+    updateSettings({ voice: { tts_enabled: val } })
+  }
+
+  const handleVoiceTimeout = (val: number) => {
+    setVoiceTimeout(val)
+    updateSettings({ voice: { command_timeout_ms: val } })
   }
 
   return (
@@ -154,6 +209,82 @@ export default function Settings() {
             label="Enable real-time latency & tracking debug logs"
             value={debugOverlay}
             onChange={handleDebugToggle}
+          />
+        </div>
+
+        <div className="settings-card">
+          <h3 className="section-heading">👁️ Eyes & Blink Gestures</h3>
+          <SettingToggle
+            id="setting-eyes-enabled"
+            label="Enable eye-tracking (triple-blink commands)"
+            value={eyesEnabled}
+            onChange={handleEyesEnabledToggle}
+          />
+          <div className="setting-row">
+            <div className="setting-info">
+              <label className="setting-label" htmlFor="setting-blink-action">Triple-Blink Action</label>
+              <span className="setting-desc">Deliberate triple blink performs this action</span>
+            </div>
+            <select
+              id="setting-blink-action"
+              className="setting-select"
+              value={tripleBlinkAction}
+              onChange={e => handleTripleBlinkAction(e.target.value)}
+            >
+              <option value="screenshot">Screenshot (active monitor)</option>
+              <option value="volume_mute">Mute volume</option>
+              <option value="volume_unmute">Unmute volume</option>
+              <option value="minimize">Minimize window</option>
+              <option value="maximize">Maximize window</option>
+              <option value="close_window">Close window</option>
+              <option value="pause">Pause gestures</option>
+              <option value="resume">Resume gestures</option>
+            </select>
+          </div>
+          <SettingSlider
+            id="setting-ear-threshold"
+            label="Eye-Closed Threshold (EAR)"
+            desc="Lower = eyes must be more closed to count as a blink"
+            min={0.10} max={0.35} step={0.01}
+            value={earThreshold}
+            onChange={handleEarThreshold}
+          />
+        </div>
+
+        <div className="settings-card">
+          <h3 className="section-heading">🎙️ Voice Assistant (offline)</h3>
+          <SettingToggle
+            id="setting-voice-enabled"
+            label="Enable local voice assistant"
+            value={voiceEnabled}
+            onChange={handleVoiceEnabledToggle}
+          />
+          <div className="setting-row">
+            <div className="setting-info">
+              <label className="setting-label" htmlFor="setting-wake-word">Wake Word</label>
+              <span className="setting-desc">Say this word, then your command</span>
+            </div>
+            <input
+              id="setting-wake-word"
+              className="setting-text"
+              type="text"
+              value={wakeWord}
+              onChange={e => handleWakeWord(e.target.value)}
+            />
+          </div>
+          <SettingToggle
+            id="setting-tts"
+            label="Voice responses (text-to-speech)"
+            value={ttsEnabled}
+            onChange={handleTtsToggle}
+          />
+          <SettingSlider
+            id="setting-voice-timeout"
+            label="Command Capture Timeout"
+            desc="Max time to listen for a command after the wake word"
+            min={2000} max={15000} step={500}
+            value={voiceTimeout}
+            onChange={handleVoiceTimeout}
           />
         </div>
       </div>

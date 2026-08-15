@@ -115,7 +115,9 @@ class HandTracker:
             logger.error(f"MediaPipe not installed: {e}")
             return False
 
-        model_path = self.config.model_path
+        from engine.resources import resource_path
+
+        model_path = resource_path(self.config.model_path)
         if not os.path.exists(model_path):
             if not download_model(model_path):
                 return False

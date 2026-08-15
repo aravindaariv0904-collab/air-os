@@ -10,3 +10,14 @@ pywin32==306
 pynput==1.7.7
 pytest==8.3.2
 pytest-asyncio==0.23.8
+
+# Voice assistant (fully offline)
+vosk==0.3.45
+srt==3.5.3
+sounddevice==0.5.5
+pyttsx3==2.99
+comtypes==1.4.16
+
+# Screenshots / audio volume
+pillow==12.3.0
+pycaw==20251023

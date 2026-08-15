@@ -71,3 +71,24 @@
   font-size: 13px;
   color: var(--accent-blue);
 }
+
+.setting-select,
+.setting-text {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  min-width: 180px;
+}
+
+.setting-select:focus,
+.setting-text:focus {
+  border-color: var(--accent-blue);
+}
+
+.setting-text::placeholder {
+  color: var(--text-muted);
+}

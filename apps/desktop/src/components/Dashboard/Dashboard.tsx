@@ -106,8 +106,9 @@ function GestureDisplay({ gesture, confidence }: { gesture: string; confidence: 
 }
 
 export default function Dashboard() {
-  const { telemetry, status, start, stop, pause, resume, calibrate } = useEngine()
+  const { telemetry, status, start, stop, pause, resume, calibrate, voice, voiceStart, voiceStop, voiceCommand } = useEngine()
   const [fpsHistory, setFpsHistory] = useState<number[]>(Array(60).fill(0))
+  const [voiceInput, setVoiceInput] = useState('')
   const animRef = useRef<number>()
 
   useEffect(() => {
@@ -315,6 +316,76 @@ export default function Dashboard() {
           <span>60s ago</span>
           <span>Target: 30 fps</span>
           <span>now</span>
+        </div>
+      </div>
+
+      {/* ── Multimodal Status (Eyes + Voice) ────────────────── */}
+      <div className="modalities-section">
+        <div className="section-title">Multimodal Inputs</div>
+        <div className="perf-grid">
+          <div className="metric-card">
+            <div className="context-row">
+              <span className="context-label">Eyes</span>
+              <span className="context-value">
+                <span className={`profile-chip ${telemetry.eye?.face_present ? 'profile-running' : ''}`}>
+                  {telemetry.eye?.face_present ? 'FACE TRACKED' : 'NO FACE'}
+                </span>
+              </span>
+            </div>
+            <div className="context-row">
+              <span className="context-label">EAR</span>
+              <span className="context-value mono-number">{telemetry.eye?.ear ?? 0}</span>
+            </div>
+            <div className="context-row">
+              <span className="context-label">Blinks</span>
+              <span className="context-value mono-number">{telemetry.eye?.blink_count ?? 0}</span>
+            </div>
+            <div className="context-row">
+              <span className="context-label">Triple Blinks</span>
+              <span className="context-value mono-number">{telemetry.eye?.triple_blink_count ?? 0}</span>
+            </div>
+          </div>
+
+          <div className="metric-card">
+            <div className="context-row">
+              <span className="context-label">Voice</span>
+              <span className="context-value">
+                <span className={`profile-chip ${voice?.enabled ? 'profile-running' : ''}`}>
+                  {voice?.enabled ? 'LISTENING' : voice?.error || 'OFF'}
+                </span>
+              </span>
+            </div>
+            <div className="context-row">
+              <span className="context-label">State</span>
+              <span className="context-value mono-number">{voice?.state || '—'}</span>
+            </div>
+            <div className="context-row">
+              <span className="context-label">Wake word</span>
+              <span className="context-value">“{voice?.wake_word || 'jarvis'}”</span>
+            </div>
+            <div className="context-row">
+              <span className="context-label">Last command</span>
+              <span className="context-value app-name">{voice?.last_transcript || '—'}</span>
+            </div>
+            <div className="voice-test-row">
+              <input
+                className="voice-text-input"
+                type="text"
+                placeholder="Test a command: open settings"
+                value={voiceInput}
+                onChange={e => setVoiceInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && voiceInput.trim()) { voiceCommand(voiceInput.trim()); setVoiceInput('') } }}
+              />
+              <button className="btn btn-ghost btn-small" onClick={() => voiceInput.trim() && voiceCommand(voiceInput.trim())}>
+                Send
+              </button>
+              {voice?.enabled ? (
+                <button className="btn btn-ghost btn-small" onClick={voiceStop}>⏸ Stop</button>
+              ) : (
+                <button className="btn btn-primary btn-small" onClick={voiceStart}>🎙 Start</button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

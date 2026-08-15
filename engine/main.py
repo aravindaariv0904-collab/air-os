@@ -42,6 +42,13 @@ from engine.state.states import InteractionState, GestureType
 from engine.calibration.calibrator import CalibrationManager, CalibrationProfile
 from input.mouse.cursor import CursorEngine, CursorConfig
 from input.windows.send_input import WindowsInputAdapter, VK
+from input.screenshot import WindowsScreenshotService
+from engine.context import DesktopContextService
+from engine.actions.skills import VolumeController
+from engine.actions.executor import ActionExecutor, ActionResponse
+from engine.vision.face_tracker import FaceTracker, FaceTrackerConfig, compute_face_ear
+from engine.vision.blink_detector import BlinkDetector
+from engine.voice.assistant import VoiceAssistant
 from keyboard.air_tap.tap_detector import VirtualKeyboard
 from gestures.recognition.studio import GestureStudio
 from gestures.registry.manager import GestureRegistry
@@ -78,6 +85,8 @@ class Telemetry:
     profile: str = "default"
     foreground_app: str = ""
     latency_breakdown: LatencyBreakdown = field(default_factory=LatencyBreakdown)
+    eye: dict = field(default_factory=dict)
+    voice: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -111,6 +120,8 @@ class Telemetry:
             "calibration": self.calibration,
             "profile": self.profile,
             "foreground_app": self.foreground_app,
+            "eye": self.eye,
+            "voice": self.voice,
         }
 
 
@@ -119,8 +130,9 @@ class AirOSEngine:
     Main AirOS real-time engine.
     """
 
-    def __init__(self, telemetry_callback=None):
+    def __init__(self, telemetry_callback=None, voice_event_callback=None):
         self._telemetry_callback = telemetry_callback
+        self._voice_event_callback = voice_event_callback
         self._running = False
         self._enabled = True  # False = PAUSED or OFF
 
@@ -171,6 +183,32 @@ class AirOSEngine:
 
         # Virtual keyboard
         self._keyboard = VirtualKeyboard()
+
+        # Desktop context + action services (voice / eye / UI actions)
+        self._context = DesktopContextService()
+        self._screenshot_svc = WindowsScreenshotService()
+        self._volume = VolumeController()
+        self._action_executor = ActionExecutor(deps={
+            "context": self._context,
+            "input": self._input,
+            "screenshot": self._screenshot_svc,
+            "volume": self._volume,
+        })
+
+        # Face / eye tracking
+        self._face_tracker = FaceTracker(FaceTrackerConfig(
+            model_path="assets/models/face_landmarker.task",
+            num_faces=1,
+        ))
+        self._blink = BlinkDetector()
+        self._apply_eye_config()
+
+        # Voice assistant (starts on demand via config / IPC)
+        self._voice = VoiceAssistant(
+            executor=self._action_executor,
+            on_event=self._on_voice_event,
+            wake_word=self._config_mgr.config.voice.wake_word,
+        )
 
         # Gesture Studio (custom gestures)
         self._studio = GestureStudio()
@@ -233,6 +271,21 @@ class AirOSEngine:
             self._lifecycle_mgr.transition_to(EngineState.ERROR, "Camera start failed")
             return False
 
+        # Face / eye tracking (optional — engine continues without it)
+        if not self._face_tracker.initialize():
+            logger.warning("FaceTracker unavailable — eye gestures disabled")
+
+        # Desktop context polling
+        try:
+            self._context.start_polling(interval=0.5)
+        except Exception as e:
+            logger.warning(f"Desktop context polling failed: {e}")
+
+        # Voice assistant (start if enabled in config)
+        if self._config_mgr.config.voice.enabled:
+            if not self._voice.start():
+                logger.warning("Voice assistant failed to start (see voice status)")
+
         camera_info = self._camera.get_camera_info()
         logger.info(f"Camera: {camera_info}")
 
@@ -276,6 +329,16 @@ class AirOSEngine:
                 frame_id=frame_id,
                 capture_timestamp=frame_ts,
             )
+
+            # 2b. Submit to FaceTracker (non-blocking async) + eye state
+            if self._face_tracker.initialized:
+                self._face_tracker.process_frame(
+                    frame,
+                    self._mp_timestamp_ms,
+                    frame_id=frame_id,
+                    capture_timestamp=frame_ts,
+                )
+                self._update_eye_state()
 
             # 3. Get latest tracking result
             t_gesture_start = time.monotonic()
@@ -551,6 +614,113 @@ class AirOSEngine:
                     self._keyboard.deactivate()
                     self._safety_mgr.set_keyboard_mode(False)
 
+    # ------------------------------------------------------------------
+    # Eye / face tracking
+    # ------------------------------------------------------------------
+    def _update_eye_state(self):
+        """Pull the latest face result, compute EAR, and detect blink events."""
+        face_result = self._face_tracker.get_latest_result()
+        if face_result is None:
+            return
+        if face_result.num_faces == 0 or not face_result.landmarks:
+            self._blink.update(ear=1.0, face_present=False)
+            return
+        ear = compute_face_ear(face_result.landmarks[0])
+        self._blink.update(ear=ear, face_present=True)
+        event = self._blink.consume_event()
+        if event == "triple_blink" and self._config_mgr.config.eyes.enabled:
+            self._execute_eye_action()
+
+    def _execute_eye_action(self):
+        """Execute the configured triple-blink action via the ActionExecutor."""
+        action = self._config_mgr.config.eyes.triple_blink_action or "screenshot"
+        skill_actions = {
+            "screenshot": ("screenshot", {"target": "active"}),
+            "volume_mute": ("volume", {"action": "mute"}),
+            "volume_unmute": ("volume", {"action": "unmute"}),
+            "minimize": ("minimize_window", {}),
+            "maximize": ("maximize_window", {}),
+            "close_window": ("close_window", {}),
+        }
+        special = {
+            "pause": "pause",
+            "resume": "resume",
+        }
+        if action in special:
+            getattr(self, special[action])()
+            return
+        if action not in skill_actions:
+            logger.warning(f"Unknown eye action '{action}' — ignoring")
+            return
+        skill, params = skill_actions[action]
+        logger.info(f"TRIPLE BLINK -> executing '{skill}' {params}")
+        self._action_executor.execute(skill, params)
+
+    def _apply_eye_config(self):
+        e = self._config_mgr.config.eyes
+        self._blink.ear_threshold = e.ear_threshold
+        self._blink.min_closed_ms = e.min_closed_ms
+        self._blink.max_closed_ms = e.max_closed_ms
+        self._blink.cooldown_ms = e.cooldown_ms
+
+    # ------------------------------------------------------------------
+    # Voice assistant
+    # ------------------------------------------------------------------
+    def _on_voice_event(self, status: dict):
+        if self._voice_event_callback:
+            try:
+                self._voice_event_callback(status)
+            except Exception as e:
+                logger.error(f"Voice event callback error: {e}")
+
+    def voice_start(self) -> dict:
+        ok = self._voice.start()
+        return {"ok": ok, "status": self._voice.get_status()}
+
+    def voice_stop(self) -> dict:
+        self._voice.stop()
+        return {"ok": True, "status": self._voice.get_status()}
+
+    def voice_status(self) -> dict:
+        return self._voice.get_status()
+
+    def voice_text_command(self, text: str) -> dict:
+        result = self._voice.send_text_command(text)
+        return {"response": result, "status": self._voice.get_status()}
+
+    # ------------------------------------------------------------------
+    # Desktop actions (IPC surface for voice / UI)
+    # ------------------------------------------------------------------
+    def action_execute(self, skill: str, params: dict) -> dict:
+        resp = self._action_executor.execute(skill, params or {})
+        return {
+            "ok": resp.ok,
+            "skill": resp.skill,
+            "message": resp.message,
+            "verified": resp.verified,
+            "ambiguous": resp.ambiguous,
+            "matches": resp.matches,
+            "detail": resp.detail,
+            "risk": resp.risk,
+        }
+
+    def action_list(self) -> list:
+        return self._action_executor.list_skills()
+
+    def context_get(self) -> dict:
+        self._context.refresh()
+        return self._context.get_context().to_dict()
+
+    def screenshot_capture(self, target: str = "active") -> dict:
+        result = self._screenshot_svc.capture(target=target)
+        return {
+            "ok": result.ok,
+            "path": result.path,
+            "reason": result.reason,
+            "size_bytes": result.size_bytes,
+            "target": result.target,
+        }
+
     def _update_telemetry(
         self,
         result,
@@ -602,6 +772,8 @@ class AirOSEngine:
                 profile=self._profile_manager.active_profile_id,
                 foreground_app=self._profile_manager.last_app,
                 latency_breakdown=latency_breakdown,
+                eye=self._blink.to_dict(),
+                voice=self._voice.get_status(),
             )
 
         if self._telemetry_callback:
@@ -703,6 +875,15 @@ class AirOSEngine:
         updated = self._config_mgr.update_dict(patch)
         self._apply_cursor_config()
         self._apply_gesture_thresholds()
+        self._apply_eye_config()
+        v = updated.voice
+        self._voice.update_settings(
+            wake_word=v.wake_word,
+            command_timeout_ms=v.command_timeout_ms,
+            silence_timeout_ms=v.silence_timeout_ms,
+            tts_enabled=v.tts_enabled,
+        )
+        self._voice.set_enabled(v.enabled)
         return updated.to_dict()
 
     def settings_get(self) -> dict:
@@ -782,9 +963,12 @@ class AirOSEngine:
         logger.info("Stopping AirOS engine...")
         self._lifecycle_mgr.transition_to(EngineState.STOPPING)
         self._running = False
+        self._voice.stop()
+        self._context.stop_polling()
         self._safety_mgr.release_all_held_input(reason="stop")
         self._input.disable()
         self._camera.stop()
         self._tracker.close()
+        self._face_tracker.close()
         self._lifecycle_mgr.transition_to(EngineState.STOPPED)
         logger.info("AirOS engine stopped")

@@ -135,10 +135,16 @@ function connectWebSocket() {
           sendToRenderer('telemetry', payload)
         } else if (msg.type === 'profile_list') {
           sendToRenderer('profile-list', payload)
+        } else if (msg.type === 'settings_data') {
+          sendToRenderer('settings-data', payload)
         } else if (msg.type === 'engine_state') {
           engineState = payload.state || engineState
           updateTrayMenu()
           sendToRenderer('engine-state', { state: engineState })
+        } else if (msg.type === 'voice_status') {
+          sendToRenderer('voice-status', payload)
+        } else if (msg.type === 'action_result') {
+          sendToRenderer('action-result', payload)
         }
       } catch (e) {}
     })
@@ -291,6 +297,22 @@ ipcMain.on('engine-calibrate', (event) => { if (validateSender(event)) sendEngin
 ipcMain.on('engine-profile-list', (event) => { if (validateSender(event)) sendEngineCommand('profile_list') })
 ipcMain.on('engine-profile-set', (event, id) => {
   if (validateSender(event)) sendEngineCommand('profile_set', { id })
+})
+ipcMain.on('engine-settings-get', (event) => { if (validateSender(event)) sendEngineCommand('settings_get') })
+ipcMain.on('engine-settings-update', (event, settings) => {
+  if (validateSender(event)) sendEngineCommand('settings_update', { settings })
+})
+ipcMain.on('engine-voice-start', (event) => { if (validateSender(event)) sendEngineCommand('voice_start') })
+ipcMain.on('engine-voice-stop', (event) => { if (validateSender(event)) sendEngineCommand('voice_stop') })
+ipcMain.on('engine-voice-status', (event) => { if (validateSender(event)) sendEngineCommand('voice_status') })
+ipcMain.on('engine-voice-command', (event, text) => {
+  if (validateSender(event)) sendEngineCommand('voice_text_command', { text })
+})
+ipcMain.on('engine-action-execute', (event, data) => {
+  if (validateSender(event)) sendEngineCommand('action_execute', { skill: data?.skill, params: data?.params })
+})
+ipcMain.on('engine-screenshot', (event, target) => {
+  if (validateSender(event)) sendEngineCommand('screenshot_capture', { target: target || 'active' })
 })
 ipcMain.on('window-minimize', (event) => { if (validateSender(event)) mainWindow?.minimize() })
 ipcMain.on('window-maximize', (event) => {

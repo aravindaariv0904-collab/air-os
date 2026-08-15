@@ -46,6 +46,28 @@ def setup_logging(debug: bool = False):
     )
 
 
+def setup_excepthook():
+    """
+    Route unhandled exceptions to the log file. Essential for a windowed
+    executable (no console) where tracebacks would otherwise be invisible.
+    """
+    logger = logging.getLogger("airos")
+
+    def _hook(etype, value, tb):
+        logger.critical("Unhandled exception", exc_info=(etype, value, tb))
+
+    sys.excepthook = _hook
+
+    def _thread_hook(args):
+        logger.critical(
+            "Unhandled exception in thread %s",
+            getattr(args.thread, "name", None),
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    threading.excepthook = _thread_hook
+
+
 def main():
     parser = argparse.ArgumentParser(description="AirOS Engine")
     parser.add_argument("--no-ipc", action="store_true", help="Disable IPC server")
@@ -56,6 +78,7 @@ def main():
     args = parser.parse_args()
 
     setup_logging(args.debug)
+    setup_excepthook()
     logger = logging.getLogger("airos")
 
     logger.info("="*50)
@@ -66,6 +89,20 @@ def main():
     from ipc.server import IPCServer
 
     lifecycle = get_lifecycle_manager()
+
+    # Construct the engine BEFORE the IPC server starts, so a UI that connects
+    # immediately after the port opens never races an unbound 'engine' closure.
+    def on_telemetry(telemetry):
+        if ipc:
+            ipc.push_telemetry(telemetry.to_dict())
+
+    def on_voice_event(status: dict):
+        if ipc:
+            ipc.push_message({"type": "voice_status", "status": status})
+
+    engine = AirOSEngine(telemetry_callback=on_telemetry, voice_event_callback=on_voice_event)
+    if args.max_frames is not None:
+        engine._max_frames = args.max_frames
 
     ipc = None
     if not args.no_ipc:
@@ -132,6 +169,32 @@ def main():
                 cfg = engine.settings_get()
                 if ipc:
                     ipc.push_message({"type": "settings_data", "settings": cfg})
+            elif command == "voice_start":
+                if ipc:
+                    ipc.push_message({"type": "voice_status", "data": engine.voice_start()})
+            elif command == "voice_stop":
+                if ipc:
+                    ipc.push_message({"type": "voice_status", "data": engine.voice_stop()})
+            elif command == "voice_status":
+                if ipc:
+                    ipc.push_message({"type": "voice_status", "data": {"status": engine.voice_status()}})
+            elif command == "voice_text_command":
+                if ipc:
+                    ipc.push_message({"type": "voice_status", "data": engine.voice_text_command(payload.get("text", ""))})
+            elif command == "action_execute":
+                result = engine.action_execute(payload.get("skill", ""), payload.get("params", {}))
+                if ipc:
+                    ipc.push_message({"type": "action_result", "data": result})
+            elif command == "action_list":
+                if ipc:
+                    ipc.push_message({"type": "action_list", "data": engine.action_list()})
+            elif command == "context_get":
+                if ipc:
+                    ipc.push_message({"type": "context_data", "data": engine.context_get()})
+            elif command == "screenshot_capture":
+                result = engine.screenshot_capture(payload.get("target", "active"))
+                if ipc:
+                    ipc.push_message({"type": "screenshot_result", "data": result})
 
         ipc = IPCServer(on_command=on_command)
 
@@ -145,14 +208,6 @@ def main():
 
         lifecycle.add_state_callback(on_lifecycle_change)
         ipc.start()
-
-    def on_telemetry(telemetry):
-        if ipc:
-            ipc.push_telemetry(telemetry.to_dict())
-
-    engine = AirOSEngine(telemetry_callback=on_telemetry)
-    if args.max_frames is not None:
-        engine._max_frames = args.max_frames
 
     def setup_hotkey():
         try:

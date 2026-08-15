@@ -42,6 +42,14 @@ ALLOWLISTED_COMMANDS: Set[str] = {
     "profile_set_override",
     "settings_update",
     "settings_get",
+    "voice_start",
+    "voice_stop",
+    "voice_status",
+    "voice_text_command",
+    "action_execute",
+    "action_list",
+    "context_get",
+    "screenshot_capture",
     "auth",
 }
 
