@@ -1,0 +1,234 @@
+.gesture-studio {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.studio-badge {
+  background: rgba(99, 179, 237, 0.1);
+  color: var(--accent-blue);
+  border: 1px solid rgba(99, 179, 237, 0.3);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.studio-grid {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 24px;
+}
+
+.studio-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+}
+
+.card-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.studio-input, .studio-select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text-main);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.studio-input:focus, .studio-select:focus {
+  border-color: var(--accent-blue);
+  background: rgba(99, 179, 237, 0.05);
+}
+
+.recording-preview {
+  margin: 8px 0;
+}
+
+.preview-box {
+  height: 140px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.preview-box.recording {
+  border-color: var(--accent-red);
+  background: rgba(245, 101, 101, 0.05);
+}
+
+.idle-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.idle-icon {
+  font-size: 28px;
+}
+
+.recording-animation {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-red);
+}
+
+.pulse-ring {
+  width: 14px;
+  height: 14px;
+  background: var(--accent-red);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(245, 101, 101, 0.7);
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 101, 101, 0.7);
+  }
+  70% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 10px rgba(245, 101, 101, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 101, 101, 0);
+  }
+}
+
+.rec-text {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.rec-subtext {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.custom-gestures-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: 440px;
+}
+
+.custom-gesture-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.2s ease;
+}
+
+.custom-gesture-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.g-item-name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+
+.g-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.meta-tag {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+
+.meta-tag.quality {
+  background: rgba(72, 187, 120, 0.15);
+  color: var(--accent-green);
+}
+
+.meta-date {
+  color: var(--text-muted);
+}
+
+.g-item-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-icon-danger {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 16px;
+  transition: opacity 0.2s;
+}
+
+.btn-icon-danger:hover {
+  opacity: 1;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 180px;
+  color: var(--text-muted);
+  gap: 6px;
+  text-align: center;
+  font-size: 13px;
+}
